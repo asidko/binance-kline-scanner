@@ -53,6 +53,19 @@ r = js(up_run, "--count", "4", code=1)
 assert r["matched"] is False, r
 print("PASS count=4 unmet, exit 1"); ok += 1
 
+weak_run = [{"o": 100, "h": 106, "l": 99, "c": 105},
+            {"o": 105, "h": 106, "l": 104, "c": 106},   # weak interior (body 1 < 1.5 threshold)
+            {"o": 106, "h": 112, "l": 105, "c": 111}]
+r = js(baseline + weak_run, "--direction", "up", code=0)
+assert r["matched"] is True and r["runs"][0]["length"] == 3 and r["params"]["dominance"] == 0.5, r
+r = js(baseline + weak_run, "--direction", "up", "--dominance", "1", code=1)
+assert r["matched"] is False, r
+print("PASS dominance: weak interior tolerated at 0.5, rejected at 1.0"); ok += 1
+
+r = js(baseline + up_run, "--dominance", "0", code=2)
+assert r["error"] and "dominance" in r["error"], r
+print("PASS dominance out of (0,1] -> error exit 2"); ok += 1
+
 p = run([], code=1)
 assert json.loads(p.stdout)["error"] is None and json.loads(p.stdout)["stats"]["window"] == 0
 p = subprocess.run([sys.executable, DET], input="not json", capture_output=True, text=True)

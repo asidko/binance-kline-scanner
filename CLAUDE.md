@@ -17,11 +17,18 @@ same-color "large" candles. Two pieces, one responsibility each.
 - One file = one responsibility. The detector holds zero I/O; the scanner holds zero detection logic.
 
 ## Detection spec
-- A run = N+ consecutive candles, same color (bull = close>open, bear = close<open),
-  each "large": body >= K * yardstick. `--metric median-body` (default) | `atr`. The yardstick
-  comes from the given window only (symbol-agnostic). `--k` default is metric-dependent
-  (`DEFAULT_K`: 1.5 median-body, 0.9 atr) because ATR measures range, not body - resolve it
-  after parsing `--metric`, never hardcode one K for both.
+- A run = a maximal stretch of N+ consecutive same-color candles (bull = close>open,
+  bear = close<open). COLOR segments runs, not size. A candle is "large" when body >= K *
+  yardstick. `--metric median-body` (default) | `atr`. The yardstick comes from the given window
+  only (symbol-agnostic). `--k` default is metric-dependent (`DEFAULT_K`: 1.5 median-body, 0.9
+  atr) because ATR measures range, not body - resolve it after parsing `--metric`, never hardcode
+  one K for both.
+- `--dominance` (float, default 0.5, range (0,1]): a run qualifies when at least this fraction of
+  its candles are large. First trim weak (non-large) candles off BOTH ends so the run is anchored
+  large->large, then test `large_count >= dominance * length`. 1.0 = every candle large (old
+  strict mode), 0.5 = majority. Trimming is what kills "one monster candle + filler" masking; the
+  fraction is what tolerates a weak breather candle mid-impulse. Never use mean body to gate -
+  one giant candle would mask dojis.
 - Flat window (median/atr yardstick <= 0): match NOTHING and set a warning. Never fall back to
   "any nonzero body is large" - that fires on noise exactly when the size signal is dead.
 - `--fresh`: keep only runs whose base is not yet crossed by a later wick. Base = the run's far

@@ -33,6 +33,11 @@ WINDOWS = {
     "ZZZ": window(3, 5, trailing=2),
     "LVL": window(3, 5, trailing=0) + [small(115, 114), small(114, 115)],  # red+green after -> level
     "ONG": window(3, 5, trailing=0),               # run at tip, nothing after -> ongoing
+    "WK": [small(100, 101), small(101, 100)] * 5 + [          # large/weak/large up run
+        {"o": 100, "h": 106, "l": 99, "c": 105},
+        {"o": 105, "h": 106, "l": 104, "c": 106},            # weak interior (body 1 < 1.5)
+        {"o": 106, "h": 112, "l": 105, "c": 111},
+    ] + [small(111, 110.7)] * 2,
 }
 
 
@@ -42,8 +47,8 @@ def fake_fetch(symbol, interval, limit):
     return WINDOWS[symbol]
 
 
-def run_scan(symbols, fresh=True, type_filter="both"):
-    return scanner.scan(symbols, fake_fetch, 3, "median-body", 1.5, 14, "up", type_filter, fresh, False, "15m", 40)
+def run_scan(symbols, fresh=True, type_filter="both", dominance=0.5):
+    return scanner.scan(symbols, fake_fetch, 3, dominance, "median-body", 1.5, 14, "up", type_filter, fresh, False, "15m", 40)
 
 
 ok = 0
@@ -106,5 +111,10 @@ r, _ = run_scan(["ONG"], type_filter="ongoing")
 assert [x["symbol"] for x in r] == ["ONG"] and r[0]["runs"][0]["type"] == "ongoing", r
 assert run_scan(["ONG"], type_filter="level")[0] == [], "ongoing must not match --type level"
 print("PASS --type filters level vs ongoing; type present in output"); ok += 1
+
+r, _ = run_scan(["WK"], dominance=0.5)
+assert [x["symbol"] for x in r] == ["WK"] and r[0]["runs"][0]["length"] == 3, r
+assert run_scan(["WK"], dominance=1.0)[0] == [], "dominance=1.0 must reject a weak interior candle"
+print("PASS dominance: majority-large run passes at 0.5, rejected at 1.0"); ok += 1
 
 print(f"\nALL {ok} SCANNER TESTS PASSED")

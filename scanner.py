@@ -20,6 +20,8 @@ Options:
   --limit <n>          klines fetched per symbol (default 40)
   --workers <n>        parallel fetches, bounded pool 1..32 (default 8)
   --count <n>          candles in a run (default 3)
+  --dominance <f>      fraction of a run's candles that must be 'large' (default 0.5;
+                       1.0 = every candle large, 0.5 = majority; weak ends trimmed)
   --metric <name>      median-body (default) | atr
   --k <float>          body must be >= K * yardstick (default 1.5 median-body, 0.9 atr)
   --atr-period <n>     ATR lookback, atr metric only (default 14)
@@ -92,14 +94,14 @@ def _priority(entry: dict) -> tuple:
     return (top["age"], -top["length"], -(top["body_mult_mean"] or 0), entry["symbol"])
 
 
-def scan(symbols: list[str], fetch, count: int, metric: str, k: float, atr_period: int, direction: str,
+def scan(symbols: list[str], fetch, count: int, dominance: float, metric: str, k: float, atr_period: int, direction: str,
          type_filter: str, fresh: bool, with_candles: bool, interval: str, limit: int, workers: int = 8) -> tuple[list[dict], list[dict]]:
     results: list[dict] = []
     errors: list[dict] = []
 
     def analyze(symbol: str) -> dict:
         candles = fetch(symbol, interval, limit)
-        return det.run_detection(candles, count, metric, k, atr_period, direction, type_filter, fresh, with_candles)
+        return det.run_detection(candles, count, dominance, metric, k, atr_period, direction, type_filter, fresh, with_candles)
 
     with ThreadPoolExecutor(max_workers=max(1, min(workers, MAX_WORKERS))) as pool:
         futures = {pool.submit(analyze, s): s for s in symbols}
@@ -123,7 +125,7 @@ def render_text(out: dict) -> str:
     fresh = "fresh" if p["fresh_required"] else "any"
     took = f" in {out['elapsed_s']:g}s" if out.get("elapsed_s") is not None else ""
     lines = [f"Scanned {out['scanned']} symbols, {out['matched_count']} matched, {len(out['errors'])} errors{took}. "
-             f"{p['count']}+ {dirn} {p['metric']}, k={p['k']:g}, {fresh}, {p['interval']} x{p['limit']}. "
+             f"{p['count']}+ {dirn} {p['metric']}, k={p['k']:g}, dom={p['dominance']:g}, {fresh}, {p['interval']} x{p['limit']}. "
              f"Ranked by recency, length, body."]
     if out["results"]:
         lines.append(f"  {'SYMBOL':<12} {'DIR':<4} {'TYPE':<7} {'AGE':>3} {'LEN':>3} {'BASE':>13} {'STATE':<5} {'AVGX':>5}  BODIES")
@@ -154,6 +156,7 @@ def main() -> int:
     parser.add_argument("--limit", metavar="<n>", type=int, default=40)
     parser.add_argument("--workers", metavar="<n>", type=int, default=8)
     parser.add_argument("--count", "-n", metavar="<n>", type=int, default=3)
+    parser.add_argument("--dominance", metavar="<f>", type=float, default=0.5)
     parser.add_argument("--metric", choices=list(det.METRICS), default="median-body", metavar="<name>")
     parser.add_argument("--k", metavar="<float>", type=float, default=None)
     parser.add_argument("--atr-period", metavar="<n>", type=int, default=14)
@@ -169,7 +172,7 @@ def main() -> int:
     k = args.k if args.k is not None else det.DEFAULT_K[args.metric]
     out: dict = {
         "schema": det.SCHEMA,
-        "params": {"count": args.count, "metric": args.metric, "k": k, "direction": args.direction,
+        "params": {"count": args.count, "dominance": args.dominance, "metric": args.metric, "k": k, "direction": args.direction,
                    "type": args.type, "fresh_required": fresh, "interval": args.interval, "limit": args.limit},
         "scanned": 0, "matched_count": 0, "elapsed_s": None, "errors": [], "results": [],
     }
@@ -186,7 +189,7 @@ def main() -> int:
 
     print(f"scanning {len(symbols)} symbols, {args.interval} x{args.limit}, {args.workers} workers ...", file=sys.stderr)
     t0 = time.monotonic()
-    results, errors = scan(symbols, fetch_klines, args.count, args.metric, k, args.atr_period,
+    results, errors = scan(symbols, fetch_klines, args.count, args.dominance, args.metric, k, args.atr_period,
                            args.direction, args.type, fresh, args.candles, args.interval, args.limit, args.workers)
     out["elapsed_s"] = round(time.monotonic() - t0, 2)
     out["scanned"] = len(symbols)

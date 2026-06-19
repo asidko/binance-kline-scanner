@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""klines_seq_detector.py - detect N consecutive large same-color candles in a window.
+"""klines_seq_detector.py - detect runs of N consecutive, mostly-large same-color candles.
 
 Standalone filter: reads an OHLC window as JSON on stdin, prints a verdict on stdout.
 Knows nothing about coins, exchanges, or time - pure candle math on array indices.
@@ -16,6 +16,8 @@ Exit   : 0 = matched, 1 = no match, 2 = error (use --exit-zero to always exit 0)
 
 Options:
   --count <n>        candles in a run (default 3)
+  --dominance <f>    fraction of a run's candles that must be 'large' (default 0.5):
+                     1.0 = every candle large, 0.5 = majority. Weak ends are trimmed.
   --metric <name>    'large' yardstick: median-body (default) | atr
   --k <float>        body must be >= K * yardstick (default 1.5 median-body, 0.9 atr)
   --atr-period <n>   ATR lookback, atr metric only (default 14)
@@ -94,21 +96,27 @@ def large_flags(candles: list[dict], threshold: float) -> list[bool]:
     return [body(c) >= threshold for c in candles]
 
 
-def find_runs(candles: list[dict], large: list[bool], count: int) -> list[tuple[int, int, int]]:
+def find_runs(candles: list[dict], large: list[bool], count: int, dominance: float) -> list[tuple[int, int, int]]:
     runs: list[tuple[int, int, int]] = []
     n = len(candles)
     i = 0
     while i < n:
         d = direction(candles[i])
-        if d != 0 and large[i]:
-            j = i
-            while j + 1 < n and direction(candles[j + 1]) == d and large[j + 1]:
-                j += 1
-            if j - i + 1 >= count:
-                runs.append((i, j, d))
-            i = j + 1
-        else:
+        if d == 0:
             i += 1
+            continue
+        j = i
+        while j + 1 < n and direction(candles[j + 1]) == d:
+            j += 1
+        s, e = i, j
+        while s <= e and not large[s]:
+            s += 1
+        while e >= s and not large[e]:
+            e -= 1
+        length = e - s + 1
+        if s <= e and length >= count and sum(large[s:e + 1]) >= dominance * length:
+            runs.append((s, e, d))
+        i = j + 1
     return runs
 
 
@@ -128,13 +136,13 @@ def run_type(candles: list[dict], end: int) -> str:
     return "level" if 1 in after and -1 in after else "ongoing"
 
 
-def detect(candles: list[dict], count: int, ref: dict, direction_filter: str,
+def detect(candles: list[dict], count: int, dominance: float, ref: dict, direction_filter: str,
            fresh_only: bool, with_candles: bool) -> list[dict]:
     large = large_flags(candles, ref["threshold"])
     unit = ref["unit"]
     n = len(candles)
     out: list[dict] = []
-    for start, end, d in find_runs(candles, large, count):
+    for start, end, d in find_runs(candles, large, count, dominance):
         dname = "up" if d == 1 else "down"
         if direction_filter != "both" and dname != direction_filter:
             continue
@@ -156,27 +164,30 @@ def detect(candles: list[dict], count: int, ref: dict, direction_filter: str,
     return out
 
 
-def _skeleton(count: int, metric: str, k: float, direction: str, type_filter: str, fresh: bool) -> dict:
+def _skeleton(count: int, dominance: float, metric: str, k: float, direction: str, type_filter: str, fresh: bool) -> dict:
     return {
         "schema": SCHEMA, "matched": False,
-        "params": {"count": count, "metric": metric, "k": k, "direction": direction,
+        "params": {"count": count, "dominance": dominance, "metric": metric, "k": k, "direction": direction,
                    "type": type_filter, "fresh_required": fresh},
         "stats": {"window": 0, "unit": None, "threshold": None, "atr_period": None},
         "runs": [], "error": None, "warning": None,
     }
 
 
-def run_detection(candles: list[dict], count: int, metric: str, k: float, atr_period: int,
+def run_detection(candles: list[dict], count: int, dominance: float, metric: str, k: float, atr_period: int,
                   direction: str, type_filter: str, fresh: bool, with_candles: bool) -> dict:
-    result = _skeleton(count, metric, k, direction, type_filter, fresh)
+    result = _skeleton(count, dominance, metric, k, direction, type_filter, fresh)
     result["stats"]["window"] = len(candles)
     if count < 1:
         result["error"] = "count must be >= 1"
         return result
+    if not 0 < dominance <= 1:
+        result["error"] = "dominance must be in (0, 1]"
+        return result
     if len(candles) >= count:
         ref = METRICS[metric](candles, k, atr_period)
         result["stats"].update({"unit": ref["unit"], "threshold": ref["threshold"], "atr_period": ref["atr_period"]})
-        runs = detect(candles, count, ref, direction, fresh, with_candles)
+        runs = detect(candles, count, dominance, ref, direction, fresh, with_candles)
         if type_filter != "both":
             runs = [r for r in runs if r["type"] == type_filter]
         result["runs"] = runs
@@ -201,11 +212,11 @@ def render_text(result: dict) -> str:
     lines: list[str] = []
     if not runs:
         lines.append(f"No match. {p['count']}+ {dirn} {p['metric']} candles required "
-                     f"(k={p['k']:g}, {s['window']}-candle window).")
+                     f"(k={p['k']:g}, dom={p['dominance']:g}, {s['window']}-candle window).")
     else:
         fresh_req = ", fresh required" if p["fresh_required"] else ""
         lines.append(f"Matched {len(runs)} run{'s' if len(runs) != 1 else ''}. "
-                     f"{p['count']}+ {dirn} {p['metric']} candles, k={p['k']:g}{fresh_req}, "
+                     f"{p['count']}+ {dirn} {p['metric']} candles, k={p['k']:g}, dom={p['dominance']:g}{fresh_req}, "
                      f"{s['window']}-candle window. unit={s['unit']:.4g}, threshold={s['threshold']:.4g}.")
         for r in runs:
             avgx = f"{r['body_mult_mean']:g}" if r["body_mult_mean"] is not None else "-"
@@ -230,6 +241,7 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--count", "-n", type=int, default=3, metavar="<n>")
+    parser.add_argument("--dominance", type=float, default=0.5, metavar="<f>")
     parser.add_argument("--metric", choices=list(METRICS), default="median-body", metavar="<name>")
     parser.add_argument("--k", type=float, default=None, metavar="<float>")
     parser.add_argument("--atr-period", type=int, default=14, metavar="<n>")
@@ -249,12 +261,12 @@ def main() -> int:
     try:
         candles = parse_candles(sys.stdin.read())
     except (ValueError, json.JSONDecodeError) as exc:
-        result = _skeleton(args.count, args.metric, k, args.direction, args.type, args.fresh)
+        result = _skeleton(args.count, args.dominance, args.metric, k, args.direction, args.type, args.fresh)
         result["error"] = str(exc)
         _emit(result, args.format)
         return 0 if args.exit_zero else 2
 
-    result = run_detection(candles, args.count, args.metric, k, args.atr_period,
+    result = run_detection(candles, args.count, args.dominance, args.metric, k, args.atr_period,
                            args.direction, args.type, args.fresh, args.candles)
     _emit(result, args.format)
     if args.exit_zero:
