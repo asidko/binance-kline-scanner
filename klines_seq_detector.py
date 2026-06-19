@@ -20,6 +20,7 @@ Options:
   --k <float>        body must be >= K * yardstick (default 1.5 median-body, 0.9 atr)
   --atr-period <n>   ATR lookback, atr metric only (default 14)
   --direction <dir>  both (default) | up | down
+  --type <t>         both (default) | ongoing (one color after) | level (red+green after)
   --fresh            only runs whose base is not yet crossed by a later wick
   --candles          include each run's full OHLC (default: body multiples only)
   --format <fmt>     json (default) | text
@@ -122,6 +123,11 @@ def is_fresh(candles: list[dict], end: int, d: int, base: float) -> bool:
     return True
 
 
+def run_type(candles: list[dict], end: int) -> str:
+    after = {direction(c) for c in candles[end + 1:]}
+    return "level" if 1 in after and -1 in after else "ongoing"
+
+
 def detect(candles: list[dict], count: int, ref: dict, direction_filter: str,
            fresh_only: bool, with_candles: bool) -> list[dict]:
     large = large_flags(candles, ref["threshold"])
@@ -139,8 +145,8 @@ def detect(candles: list[dict], count: int, ref: dict, direction_filter: str,
             continue
         mults = [round(body(c) / unit, 2) if unit else None for c in seg]
         mean_mult = round(sum(mults) / len(mults), 2) if all(m is not None for m in mults) else None
-        run = {"direction": dname, "start": start, "end": end, "length": end - start + 1,
-               "age": n - 1 - end, "base": base, "fresh": fresh,
+        run = {"direction": dname, "type": run_type(candles, end), "start": start, "end": end,
+               "length": end - start + 1, "age": n - 1 - end, "base": base, "fresh": fresh,
                "body_mult_mean": mean_mult, "body_mults": mults, "candles": None}
         if with_candles:
             run["candles"] = [{"i": start + x, **{f: seg[x][f] for f in ("o", "h", "l", "c")},
@@ -150,18 +156,19 @@ def detect(candles: list[dict], count: int, ref: dict, direction_filter: str,
     return out
 
 
-def _skeleton(count: int, metric: str, k: float, direction: str, fresh: bool) -> dict:
+def _skeleton(count: int, metric: str, k: float, direction: str, type_filter: str, fresh: bool) -> dict:
     return {
         "schema": SCHEMA, "matched": False,
-        "params": {"count": count, "metric": metric, "k": k, "direction": direction, "fresh_required": fresh},
+        "params": {"count": count, "metric": metric, "k": k, "direction": direction,
+                   "type": type_filter, "fresh_required": fresh},
         "stats": {"window": 0, "unit": None, "threshold": None, "atr_period": None},
         "runs": [], "error": None, "warning": None,
     }
 
 
 def run_detection(candles: list[dict], count: int, metric: str, k: float, atr_period: int,
-                  direction: str, fresh: bool, with_candles: bool) -> dict:
-    result = _skeleton(count, metric, k, direction, fresh)
+                  direction: str, type_filter: str, fresh: bool, with_candles: bool) -> dict:
+    result = _skeleton(count, metric, k, direction, type_filter, fresh)
     result["stats"]["window"] = len(candles)
     if count < 1:
         result["error"] = "count must be >= 1"
@@ -169,8 +176,11 @@ def run_detection(candles: list[dict], count: int, metric: str, k: float, atr_pe
     if len(candles) >= count:
         ref = METRICS[metric](candles, k, atr_period)
         result["stats"].update({"unit": ref["unit"], "threshold": ref["threshold"], "atr_period": ref["atr_period"]})
-        result["runs"] = detect(candles, count, ref, direction, fresh, with_candles)
-        result["matched"] = len(result["runs"]) > 0
+        runs = detect(candles, count, ref, direction, fresh, with_candles)
+        if type_filter != "both":
+            runs = [r for r in runs if r["type"] == type_filter]
+        result["runs"] = runs
+        result["matched"] = len(runs) > 0
         if ref["unit"] <= 0:
             result["warning"] = "no body baseline (flat window); nothing flagged"
         elif len(candles) < 10:
@@ -200,7 +210,7 @@ def render_text(result: dict) -> str:
         for r in runs:
             avgx = f"{r['body_mult_mean']:g}" if r["body_mult_mean"] is not None else "-"
             bodies = "/".join(f"{m:g}" if m is not None else "-" for m in r["body_mults"])
-            lines.append(f"  {r['direction']:<4} [{r['start']}-{r['end']}]  len {r['length']:<2} "
+            lines.append(f"  {r['direction']:<4} {r['type']:<7} [{r['start']}-{r['end']}]  len {r['length']:<2} "
                          f"age {r['age']:<3} base {fmt_price(r['base']):>12}  {'fresh' if r['fresh'] else 'stale':<5} "
                          f"avgx {avgx:<5} bodies {bodies}")
             if r["candles"]:
@@ -224,6 +234,7 @@ def main() -> int:
     parser.add_argument("--k", type=float, default=None, metavar="<float>")
     parser.add_argument("--atr-period", type=int, default=14, metavar="<n>")
     parser.add_argument("--direction", choices=["both", "up", "down"], default="both", metavar="<dir>")
+    parser.add_argument("--type", choices=["both", "ongoing", "level"], default="both", metavar="<t>")
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--candles", action="store_true")
     parser.add_argument("--format", choices=["json", "text"], default="json", metavar="<fmt>")
@@ -238,13 +249,13 @@ def main() -> int:
     try:
         candles = parse_candles(sys.stdin.read())
     except (ValueError, json.JSONDecodeError) as exc:
-        result = _skeleton(args.count, args.metric, k, args.direction, args.fresh)
+        result = _skeleton(args.count, args.metric, k, args.direction, args.type, args.fresh)
         result["error"] = str(exc)
         _emit(result, args.format)
         return 0 if args.exit_zero else 2
 
     result = run_detection(candles, args.count, args.metric, k, args.atr_period,
-                           args.direction, args.fresh, args.candles)
+                           args.direction, args.type, args.fresh, args.candles)
     _emit(result, args.format)
     if args.exit_zero:
         return 0

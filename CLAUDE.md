@@ -27,6 +27,9 @@ same-color "large" candles. Two pieces, one responsibility each.
 - `--fresh`: keep only runs whose base is not yet crossed by a later wick. Base = the run's far
   edge: up-run = lowest low, down-run = highest high. A later wick poking INTO the run is fine;
   a wick fully past the base breaks it. The scanner defaults fresh ON; `--include-stale` opts out.
+- `--type`: classify each run by what closed AFTER it - `level` (a red AND a green candle closed
+  after = reaction/zone formed) vs `ongoing` (one color, or nothing, after = move still running).
+  Always emitted in output; `--type ongoing|level` filters, `both` (default) does not.
 - Ranking (runs within a window, and symbols within a scan) is lexicographic by user priority:
   1) recency (smaller `age`), 2) length, 3) body size (`body_mult_mean`). Then symbol, for
   deterministic ties. Never a weighted score - priority is ordered.

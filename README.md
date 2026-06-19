@@ -32,6 +32,7 @@ uv run ./scanner.py                                       # scan scan_symbols.tx
 uv run ./scanner.py --format text                         # aligned human table
 uv run ./scanner.py --direction down --format text        # only bearish impulses
 uv run ./scanner.py --include-stale --format text         # also show already-broken runs
+uv run ./scanner.py --type ongoing --format text          # only still-moving (level = already reacted)
 uv run ./scanner.py --symbols SOLUSDT,XRPUSDT --count 3 --k 2
 uv run ./scanner.py --symbols-file my_list.txt --interval 1h --workers 12
 
@@ -46,8 +47,8 @@ inline comments allowed), defaulting to `scan_symbols.txt`. Edit that file to ch
 - `--format json` (default) for tools, `text` for eyes (aligned columns + a summary line with
   timing, counts, and the ranking order).
 - Exit codes: `0` matched, `1` none, `2` error (`--exit-zero` to always exit 0).
-- Each match carries direction, age (candles since it closed), length, base level, fresh flag,
-  mean body multiple, and per-candle body multiples.
+- Each match carries direction, type (ongoing = still one color after / level = red+green reacted
+  after), age (candles since it closed), length, base level, fresh flag, and body multiples.
 
 ## Symbols
 

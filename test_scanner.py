@@ -31,6 +31,8 @@ WINDOWS = {
     "G": window(3, 5, trailing=0) + [{"o": 115, "h": 116, "l": 90, "c": 112}],  # base broken -> stale
     "AAA": window(3, 5, trailing=2),               # identical to ZZZ -> tiebreak by symbol
     "ZZZ": window(3, 5, trailing=2),
+    "LVL": window(3, 5, trailing=0) + [small(115, 114), small(114, 115)],  # red+green after -> level
+    "ONG": window(3, 5, trailing=0),               # run at tip, nothing after -> ongoing
 }
 
 
@@ -40,8 +42,8 @@ def fake_fetch(symbol, interval, limit):
     return WINDOWS[symbol]
 
 
-def run_scan(symbols, fresh=True):
-    return scanner.scan(symbols, fake_fetch, 3, "median-body", 1.5, 14, "up", fresh, False, "15m", 40)
+def run_scan(symbols, fresh=True, type_filter="both"):
+    return scanner.scan(symbols, fake_fetch, 3, "median-body", 1.5, 14, "up", type_filter, fresh, False, "15m", 40)
 
 
 ok = 0
@@ -96,5 +98,13 @@ scanner.urllib.request.urlopen = lambda url, timeout=10: _FakeResp([[0, "1.5", "
 fk = scanner.fetch_klines("X", "15m", 40)
 assert fk == [{"o": 1.5, "h": 2.0, "l": 1.0, "c": 1.8}] and all(isinstance(v, float) for v in fk[0].values()), fk
 print("PASS fetch_klines casts Binance string OHLC to float (the live-crash bug)"); ok += 1
+
+r, _ = run_scan(["LVL"], type_filter="level")
+assert [x["symbol"] for x in r] == ["LVL"] and r[0]["runs"][0]["type"] == "level", r
+assert run_scan(["LVL"], type_filter="ongoing")[0] == [], "level must not match --type ongoing"
+r, _ = run_scan(["ONG"], type_filter="ongoing")
+assert [x["symbol"] for x in r] == ["ONG"] and r[0]["runs"][0]["type"] == "ongoing", r
+assert run_scan(["ONG"], type_filter="level")[0] == [], "ongoing must not match --type level"
+print("PASS --type filters level vs ongoing; type present in output"); ok += 1
 
 print(f"\nALL {ok} SCANNER TESTS PASSED")
