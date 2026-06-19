@@ -1,0 +1,57 @@
+# Symbols to scan. One per line; blank lines and #-comments (incl. inline) ignored. Edit freely.
+
+# --- Crypto: liquid, established USD-M perps. No BTC/ETH, no microcap memes. ---
+SOLUSDT
+BNBUSDT
+XRPUSDT
+DOGEUSDT
+ADAUSDT
+AVAXUSDT
+LINKUSDT
+DOTUSDT
+TRXUSDT
+LTCUSDT
+BCHUSDT
+NEARUSDT
+ATOMUSDT
+UNIUSDT
+APTUSDT
+ARBUSDT
+OPUSDT
+SUIUSDT
+INJUSDT
+FILUSDT
+ICPUSDT
+ETCUSDT
+XLMUSDT
+HBARUSDT
+AAVEUSDT
+TONUSDT
+TIAUSDT
+SEIUSDT
+RENDERUSDT
+MKRUSDT
+
+# --- TradFi / pre-IPO equity perps (Binance TRADIFI_PERPETUAL): popular names. ---
+SPCXUSDT      # SpaceX (pre-IPO)
+OPENAIUSDT    # OpenAI (pre-IPO)
+TSLAUSDT
+NVDAUSDT
+AAPLUSDT
+MSFTUSDT
+AMZNUSDT
+METAUSDT
+GOOGLUSDT
+AMDUSDT
+INTCUSDT
+AVGOUSDT      # Broadcom
+ORCLUSDT      # Oracle
+MUUSDT        # Micron
+MSTRUSDT      # MicroStrategy
+COINUSDT      # Coinbase
+PLTRUSDT      # Palantir
+HOODUSDT      # Robinhood
+NFLXUSDT      # Netflix
+GMEUSDT       # GameStop
+CRCLUSDT      # Circle
+ARMUSDT       # ARM Holdings
