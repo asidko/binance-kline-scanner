@@ -1,36 +1,16 @@
 # Symbols to scan. One per line; blank lines and #-comments (incl. inline) ignored. Edit freely.
 
-# --- Crypto: liquid, established USD-M perps. No BTC/ETH, no microcap memes. ---
-SOLUSDT
+# --- Crypto: the most distinctive majors (no BTC/ETH). ---
 BNBUSDT
+SOLUSDT
 XRPUSDT
 DOGEUSDT
-ADAUSDT
-AVAXUSDT
-LINKUSDT
-DOTUSDT
+TONUSDT
 TRXUSDT
 LTCUSDT
-BCHUSDT
-NEARUSDT
-ATOMUSDT
-UNIUSDT
-APTUSDT
-ARBUSDT
-OPUSDT
-SUIUSDT
-INJUSDT
-FILUSDT
-ICPUSDT
-ETCUSDT
-XLMUSDT
-HBARUSDT
-AAVEUSDT
-TONUSDT
-TIAUSDT
-SEIUSDT
-RENDERUSDT
-MKRUSDT
+LINKUSDT
+ADAUSDT
+AVAXUSDT
 
 # --- TradFi / pre-IPO equity perps (Binance TRADIFI_PERPETUAL): popular names. ---
 SPCXUSDT      # SpaceX (pre-IPO)
