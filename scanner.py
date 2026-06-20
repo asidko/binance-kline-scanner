@@ -129,14 +129,14 @@ def render_text(out: dict) -> str:
              f"{p['count']}+ {dirn} {p['metric']}, k={p['k']:g}, dom={p['dominance']:g}, {fresh}, {p['interval']} x{p['limit']}. "
              f"Ranked by recency band, length, body."]
     if out["results"]:
-        lines.append(f"  {'SYMBOL':<12} {'DIR':<4} {'TYPE':<7} {'AGE':>3} {'LEN':>3} {'BASE':>13} {'LEVEL':>13} {'STATE':<5} {'AVGX':>5}  BODIES")
+        lines.append(f"  {'SYMBOL':<12} {'DIR':<4} {'TYPE':<7} {'LEVEL':>13} {'AGE':>3} {'LEN':>3} {'BASE':>13} {'STATE':<5} {'AVGX':>5}  BODIES")
         for e in out["results"]:
             t = e["runs"][0]
             avgx = f"{t['body_mult_mean']:g}" if t["body_mult_mean"] is not None else "-"
             bodies = "/".join(f"{m:g}" if m is not None else "-" for m in t["body_mults"])
             lvl = det.fmt_price(t["level"]) if t["level"] is not None else "-"
-            lines.append(f"  {e['symbol']:<12} {t['direction']:<4} {t['type']:<7} {t['age']:>3} {t['length']:>3} "
-                         f"{det.fmt_price(t['base']):>13} {lvl:>13} {'fresh' if t['fresh'] else 'stale':<5} {avgx:>5}  {bodies}")
+            lines.append(f"  {e['symbol']:<12} {t['direction']:<4} {t['type']:<7} {lvl:>13} {t['age']:>3} {t['length']:>3} "
+                         f"{det.fmt_price(t['base']):>13} {'fresh' if t['fresh'] else 'stale':<5} {avgx:>5}  {bodies}")
     for e in out["errors"]:
         lines.append(f"  ! {e['symbol']}: {e['error']}")
     return "\n".join(lines)

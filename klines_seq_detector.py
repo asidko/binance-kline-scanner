@@ -255,8 +255,8 @@ def render_text(result: dict) -> str:
             avgx = f"{r['body_mult_mean']:g}" if r["body_mult_mean"] is not None else "-"
             bodies = "/".join(f"{m:g}" if m is not None else "-" for m in r["body_mults"])
             lvl = fmt_price(r["level"]) if r["level"] is not None else "-"
-            lines.append(f"  {r['direction']:<4} {r['type']:<7} [{r['start']}-{r['end']}]  len {r['length']:<2} "
-                         f"age {r['age']:<3} base {fmt_price(r['base']):>12} level {lvl:>12}  {'fresh' if r['fresh'] else 'stale':<5} "
+            lines.append(f"  {r['direction']:<4} {r['type']:<7} level {lvl:>12} [{r['start']}-{r['end']}]  len {r['length']:<2} "
+                         f"age {r['age']:<3} base {fmt_price(r['base']):>12}  {'fresh' if r['fresh'] else 'stale':<5} "
                          f"avgx {avgx:<5} bodies {bodies}")
             if r["candles"]:
                 for c in r["candles"]:

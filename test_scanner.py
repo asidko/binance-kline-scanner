@@ -136,8 +136,8 @@ out = {"params": {"count": 3, "dominance": 0.5, "metric": "median-body", "k": 1.
 txt = scanner.render_text(out)
 header, rows = txt.splitlines()[1], {ln.split()[0]: ln.split() for ln in txt.splitlines() if ln.strip()[:3] in ("LVL", "ONG")}
 assert "LEVEL" in header, header
-assert rows["LVL"][5] == "99" and rows["LVL"][6] == "114", rows["LVL"]   # base col, level col
-assert rows["ONG"][6] == "-", rows["ONG"]                                  # ongoing -> dash
+assert rows["LVL"][3] == "114" and rows["LVL"][6] == "99", rows["LVL"]   # level col, base col
+assert rows["ONG"][3] == "-", rows["ONG"]                                  # ongoing -> dash
 print("PASS scanner text renders LEVEL column: level price for level run, '-' for ongoing"); ok += 1
 
 r, _ = run_scan(["WK"], dominance=0.5)
