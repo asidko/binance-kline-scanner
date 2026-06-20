@@ -23,8 +23,8 @@ baseline = [small(100, 101), small(101, 100)] * 5
 up_run = [{"o": 100, "h": 106, "l": 99, "c": 105},
           {"o": 105, "h": 111, "l": 104, "c": 110},
           {"o": 110, "h": 116, "l": 109, "c": 115}]
-fresh_tail = [{"o": 115, "h": 116, "l": 100, "c": 112}]
-broken_tail = [{"o": 115, "h": 116, "l": 98, "c": 112}]
+fresh_tail = [{"o": 115, "h": 116, "l": 108, "c": 112}]    # closes 112 >= run floor 110 -> nothing reclaimed -> fresh
+broken_tail = [{"o": 115, "h": 116, "l": 108, "c": 109}]   # closes 109 < floor 110 -> reclaims a run candle -> stale (wick low same, only close differs)
 
 ok = 0
 
@@ -65,6 +65,29 @@ print("PASS dominance: weak interior tolerated at 0.5, rejected at 1.0"); ok += 
 r = js(baseline + up_run, "--dominance", "0", code=2)
 assert r["error"] and "dominance" in r["error"], r
 print("PASS dominance out of (0,1] -> error exit 2"); ok += 1
+
+lvl_tail = [small(115, 114), small(114, 115)]   # red then green after -> reaction/consolidation
+r = js(baseline + up_run + lvl_tail, "--direction", "up", code=0)
+run0 = r["runs"][0]
+# level = post-run body FLOOR (up-run support): min(min(o,c)) over lvl_tail = 114; base = lowest low 99
+assert run0["type"] == "level" and run0["level"] == 114 and run0["base"] == 99, run0
+down_run = [{"o": 100, "h": 101, "l": 94, "c": 95},
+            {"o": 95, "h": 96, "l": 89, "c": 90},
+            {"o": 90, "h": 91, "l": 84, "c": 85}]
+run0 = js(baseline + down_run + [small(85, 86), small(86, 85)], "--direction", "down", code=0)["runs"][0]
+# level = post-run body CEILING (down-run resistance): max(max(o,c)) over the two tail candles = 86; base = highest high 101
+assert run0["type"] == "level" and run0["level"] == 86 and run0["base"] == 101, run0
+stale_lvl = [{"o": 115, "h": 116, "l": 108, "c": 109}, small(110, 111)]   # red closes 109 < floor 110 (reclaim -> stale), then green -> level
+run0 = js(baseline + up_run + stale_lvl, "--direction", "up", code=0)["runs"][0]
+# post-run body floor over the two tail candles: min(109, 110) = 109
+assert run0["fresh"] is False and run0["type"] == "level" and run0["level"] == 109, run0   # level set regardless of freshness
+r = js(baseline + up_run, "--direction", "up", code=0)
+assert r["runs"][0]["type"] == "ongoing" and r["runs"][0]["level"] is None, r["runs"][0]
+print("PASS level = body-biased top-wick avg for level runs (up/down/stale), null for ongoing"); ok += 1
+
+p = run(baseline + up_run + lvl_tail, "--direction", "up", "--format", "text", code=0)
+assert "level" in p.stdout and "114" in p.stdout, p.stdout   # truthy fmt_price branch in render_text
+print("PASS --format text renders the level column for a level run"); ok += 1
 
 p = run([], code=1)
 assert json.loads(p.stdout)["error"] is None and json.loads(p.stdout)["stats"]["window"] == 0

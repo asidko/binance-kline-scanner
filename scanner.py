@@ -57,13 +57,15 @@ JITTER = 0.1
 
 
 def fetch_klines(symbol: str, interval: str, limit: int, retries: int = 2) -> list[dict]:
-    url = f"{FAPI_KLINES}?{urllib.parse.urlencode({'symbol': symbol, 'interval': interval, 'limit': limit})}"
+    # fetch one extra and drop the final kline - on a live feed the most recent candle is still
+    # forming, so counting it would shift runs, freshness, and levels on every poll until it closes
+    url = f"{FAPI_KLINES}?{urllib.parse.urlencode({'symbol': symbol, 'interval': interval, 'limit': limit + 1})}"
     time.sleep(random.uniform(0, JITTER))  # de-sync the worker burst so we don't hit Binance all at once
     for attempt in range(retries + 1):
         try:
             with urllib.request.urlopen(url, timeout=10) as resp:
                 rows = json.load(resp)
-            return [{"o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4])} for r in rows]
+            return [{"o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4])} for r in rows[:-1]]
         except urllib.error.HTTPError as exc:
             retry_after = exc.headers.get("Retry-After", "1")
             wait = float(retry_after) if retry_after.isdigit() else 1.0
@@ -90,8 +92,7 @@ def load_symbols(symbols_arg: str | None, symbols_file: Path) -> list[str]:
 
 
 def _priority(entry: dict) -> tuple:
-    top = entry["runs"][0]
-    return (top["age"], -top["length"], -(top["body_mult_mean"] or 0), entry["symbol"])
+    return (*det.rank_key(entry["runs"][0]), entry["symbol"])
 
 
 def scan(symbols: list[str], fetch, count: int, dominance: float, metric: str, k: float, atr_period: int, direction: str,
@@ -126,15 +127,16 @@ def render_text(out: dict) -> str:
     took = f" in {out['elapsed_s']:g}s" if out.get("elapsed_s") is not None else ""
     lines = [f"Scanned {out['scanned']} symbols, {out['matched_count']} matched, {len(out['errors'])} errors{took}. "
              f"{p['count']}+ {dirn} {p['metric']}, k={p['k']:g}, dom={p['dominance']:g}, {fresh}, {p['interval']} x{p['limit']}. "
-             f"Ranked by recency, length, body."]
+             f"Ranked by recency band, length, body."]
     if out["results"]:
-        lines.append(f"  {'SYMBOL':<12} {'DIR':<4} {'TYPE':<7} {'AGE':>3} {'LEN':>3} {'BASE':>13} {'STATE':<5} {'AVGX':>5}  BODIES")
+        lines.append(f"  {'SYMBOL':<12} {'DIR':<4} {'TYPE':<7} {'AGE':>3} {'LEN':>3} {'BASE':>13} {'LEVEL':>13} {'STATE':<5} {'AVGX':>5}  BODIES")
         for e in out["results"]:
             t = e["runs"][0]
             avgx = f"{t['body_mult_mean']:g}" if t["body_mult_mean"] is not None else "-"
             bodies = "/".join(f"{m:g}" if m is not None else "-" for m in t["body_mults"])
+            lvl = det.fmt_price(t["level"]) if t["level"] is not None else "-"
             lines.append(f"  {e['symbol']:<12} {t['direction']:<4} {t['type']:<7} {t['age']:>3} {t['length']:>3} "
-                         f"{det.fmt_price(t['base']):>13} {'fresh' if t['fresh'] else 'stale':<5} {avgx:>5}  {bodies}")
+                         f"{det.fmt_price(t['base']):>13} {lvl:>13} {'fresh' if t['fresh'] else 'stale':<5} {avgx:>5}  {bodies}")
     for e in out["errors"]:
         lines.append(f"  ! {e['symbol']}: {e['error']}")
     return "\n".join(lines)

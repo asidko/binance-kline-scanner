@@ -19,11 +19,13 @@ Two pieces, wired by import:
   (JSON or text). Symbol/exchange/time agnostic - just candle math. Usable standalone or imported.
 - `scanner.py` - fetches the last N klines per symbol from Binance in a bounded, jittered thread
   pool (fast but not hammering the API), runs the detector on each, and prints the matches ranked
-  by: most recent cascade, then longest run, then biggest bodies.
+  by: recency band, then longest run, then biggest bodies (within an age band length/body break
+  the near-tie). The still-forming last candle is dropped, so runs and levels never shift mid-candle.
 
 A "run" is N+ consecutive candles of one color, each with a body at least `K x` the window's
 typical body (`median-body` default, `atr` optional). `--fresh`/default-on in the scanner keeps
-only runs whose base hasn't been broken by a later wick - the still-valid setups.
+only runs no later candle has closed back into - none of the run's candles reclaimed - the
+still-valid setups.
 
 ## Commands
 
@@ -48,7 +50,10 @@ inline comments allowed), defaulting to `scan_symbols.txt`. Edit that file to ch
   timing, counts, and the ranking order).
 - Exit codes: `0` matched, `1` none, `2` error (`--exit-zero` to always exit 0).
 - Each match carries direction, type (ongoing = still one color after / level = red+green reacted
-  after), age (candles since it closed), length, base level, fresh flag, and body multiples.
+  after), age (candles since it closed), length, base (the origin extreme: up = lowest low,
+  down = highest high), break level (`level` = the consolidation-rectangle edge the post-run
+  candles form - body ceiling for down-runs, body floor for up-runs; set only for level-type runs,
+  null for ongoing), fresh flag, and body multiples.
 
 ## Symbols
 

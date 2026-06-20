@@ -31,15 +31,31 @@ same-color "large" candles. Two pieces, one responsibility each.
   one giant candle would mask dojis.
 - Flat window (median/atr yardstick <= 0): match NOTHING and set a warning. Never fall back to
   "any nonzero body is large" - that fires on noise exactly when the size signal is dead.
-- `--fresh`: keep only runs whose base is not yet crossed by a later wick. Base = the run's far
-  edge: up-run = lowest low, down-run = highest high. A later wick poking INTO the run is fine;
-  a wick fully past the base breaks it. The scanner defaults fresh ON; `--include-stale` opts out.
+- `--fresh`: keep only runs no later candle has CLOSED back into. Each run candle is reclaimed when
+  a later candle closes past its far body edge (up-run: a close below the run's highest body-bottom;
+  down-run: a close above the run's lowest body-top). A run is fresh only if NONE of its candles is
+  reclaimed - one reclaimed candle makes it stale (price is eating the range back). Closes only, not
+  wicks - a wick poking in is fine, the candle must CLOSE through. `base` (up = lowest low, down =
+  highest high) stays an informational extreme, NOT the freshness pivot. Scanner defaults fresh ON;
+  `--include-stale` opts out.
 - `--type`: classify each run by what closed AFTER it - `level` (a red AND a green candle closed
   after = reaction/zone formed) vs `ongoing` (one color, or nothing, after = move still running).
   Always emitted in output; `--type ongoing|level` filters, `both` (default) does not.
-- Ranking (runs within a window, and symbols within a scan) is lexicographic by user priority:
-  1) recency (smaller `age`), 2) length, 3) body size (`body_mult_mean`). Then symbol, for
-  deterministic ties. Never a weighted score - priority is ordered.
+- `level`: the break level a `level`-type run prints. It is NOT a stat of the run - it is the edge
+  of the consolidation rectangle the candles AFTER the run form (the reaction zone). Down-run: the
+  body CEILING (`max(max(open,close))` over the post-run candles = resistance). Up-run: the body
+  FLOOR (`min(min(open,close))` = support). Bodies only - wicks poke out of the rectangle and are
+  ignored. Computed from `candles[end+1:]`, which is non-empty exactly when the run is `level`-type
+  (a red and a green closed after), so only `level` runs get a `level`; `ongoing` runs get `None`.
+  Distinct from `base` (the lowest-low/highest-high freshness pivot inside the run). The unclosed
+  last candle is excluded upstream, so the rectangle never jitters mid-candle.
+- Ranking (runs within a window, and symbols within a scan) is lexicographic by user priority via
+  the shared `rank_key`: 1) recency as an AGE BAND (`age_bucket`), 2) length, 3) body size
+  (`body_mult_mean`), 4) exact `age`, then symbol for deterministic ties. Never a weighted score -
+  priority is ordered. Age is BANDED not raw: ages 0-5 stay distinct (recency rules there), then
+  widening bands (6-8, 9-10, 11-15, 16-20, 21-25, 26-30, ...) per `AGE_BANDS`, so a slightly older
+  but longer/bigger run outranks a fresher-but-weaker one inside the same band. The detector and
+  scanner MUST share `rank_key` - never re-derive the order in two places.
 
 ## Output contract (stable - other tools parse it)
 - `--format json` (default, machine) | `text` (human). Same information in both.
@@ -62,6 +78,10 @@ same-color "large" candles. Two pieces, one responsibility each.
   (`as_completed`), so no locks; keep `run_detection` pure (no shared mutable state).
 - Read-only Binance: base `https://fapi.binance.com`, `timeout` on every call. Isolate per-symbol
   fetch failures - one bad symbol never kills a scan; collect it in `errors`.
+- Drop the still-forming candle: `fetch_klines` requests `limit + 1` and discards the last row.
+  Binance returns the in-progress interval as the final kline; counting it would shift runs,
+  freshness, and `level` on every poll until it closes. The detector stays agnostic (it trusts its
+  input is closed); the live boundary - knowing the last kline is unclosed - lives in the scanner.
 
 ## Symbols
 - `scan_symbols.txt`: curated crypto alts (no BTC/ETH, no microcap memes) + TradFi/pre-IPO equity

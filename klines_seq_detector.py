@@ -11,7 +11,7 @@ Usage:
 
 Input  : JSON list of candles, oldest first. Each is {o,h,l,c} (or open/high/low/close),
          or a raw Binance kline array [openTime,o,h,l,c,...]. Numbers or numeric strings.
-Output : runs ranked by recency, then length, then body size. JSON (default) or --format text.
+Output : runs ranked by recency band, then length, then body size. JSON (default) or --format text.
 Exit   : 0 = matched, 1 = no match, 2 = error (use --exit-zero to always exit 0).
 
 Options:
@@ -124,11 +124,42 @@ def run_base(seg: list[dict], d: int) -> float:
     return min(c["l"] for c in seg) if d == 1 else max(c["h"] for c in seg)
 
 
-def is_fresh(candles: list[dict], end: int, d: int, base: float) -> bool:
-    for k in candles[end + 1:]:
-        if (d == 1 and k["l"] < base) or (d == -1 and k["h"] > base):
-            return False
-    return True
+def level_price(after: list[dict], d: int) -> float:
+    # edge of the consolidation rectangle the post-run candles form: down-run -> body ceiling
+    # (max body top = resistance), up-run -> body floor (min body bottom = support); wicks ignored
+    if d == 1:
+        return min(min(c["o"], c["c"]) for c in after)
+    return max(max(c["o"], c["c"]) for c in after)
+
+
+AGE_BANDS = (8, 10, 15, 20, 25, 30, 40, 60)
+
+
+def age_bucket(age: int) -> int:
+    # ages 0-5 stay distinct (recency rules there); older ages collapse into widening bands so
+    # length/body can break a near-tie - "age 8 vs 10 is basically the same setup"
+    if age <= 5:
+        return age
+    for i, hi in enumerate(AGE_BANDS):
+        if age <= hi:
+            return 6 + i
+    return 6 + len(AGE_BANDS)
+
+
+def rank_key(run: dict) -> tuple:
+    return (age_bucket(run["age"]), -run["length"], -(run["body_mult_mean"] or 0), run["age"])
+
+
+def is_fresh(candles: list[dict], start: int, end: int, d: int) -> bool:
+    # fresh only if NO run candle is reclaimed: a later candle must CLOSE past a run candle's far
+    # body edge to break it (wicks poking in are fine). One reclaimed candle makes the run stale.
+    seg = candles[start:end + 1]
+    after = candles[end + 1:]
+    if d == 1:  # up-run: a close below the run's highest body bottom reclaims that candle
+        floor = max(min(c["o"], c["c"]) for c in seg)
+        return all(k["c"] >= floor for k in after)
+    ceil = min(max(c["o"], c["c"]) for c in seg)  # down-run: a close above the lowest body top reclaims it
+    return all(k["c"] <= ceil for k in after)
 
 
 def run_type(candles: list[dict], end: int) -> str:
@@ -148,19 +179,21 @@ def detect(candles: list[dict], count: int, dominance: float, ref: dict, directi
             continue
         seg = candles[start:end + 1]
         base = run_base(seg, d)
-        fresh = is_fresh(candles, end, d, base)
+        fresh = is_fresh(candles, start, end, d)
         if fresh_only and not fresh:
             continue
+        rtype = run_type(candles, end)
         mults = [round(body(c) / unit, 2) if unit else None for c in seg]
         mean_mult = round(sum(mults) / len(mults), 2) if all(m is not None for m in mults) else None
-        run = {"direction": dname, "type": run_type(candles, end), "start": start, "end": end,
-               "length": end - start + 1, "age": n - 1 - end, "base": base, "fresh": fresh,
+        run = {"direction": dname, "type": rtype, "start": start, "end": end,
+               "length": end - start + 1, "age": n - 1 - end, "base": base,
+               "level": level_price(candles[end + 1:], d) if rtype == "level" else None, "fresh": fresh,
                "body_mult_mean": mean_mult, "body_mults": mults, "candles": None}
         if with_candles:
             run["candles"] = [{"i": start + x, **{f: seg[x][f] for f in ("o", "h", "l", "c")},
                                "body_mult": mults[x]} for x in range(len(seg))]
         out.append(run)
-    out.sort(key=lambda r: (r["age"], -r["length"], -(r["body_mult_mean"] or 0)))
+    out.sort(key=rank_key)
     return out
 
 
@@ -221,8 +254,9 @@ def render_text(result: dict) -> str:
         for r in runs:
             avgx = f"{r['body_mult_mean']:g}" if r["body_mult_mean"] is not None else "-"
             bodies = "/".join(f"{m:g}" if m is not None else "-" for m in r["body_mults"])
+            lvl = fmt_price(r["level"]) if r["level"] is not None else "-"
             lines.append(f"  {r['direction']:<4} {r['type']:<7} [{r['start']}-{r['end']}]  len {r['length']:<2} "
-                         f"age {r['age']:<3} base {fmt_price(r['base']):>12}  {'fresh' if r['fresh'] else 'stale':<5} "
+                         f"age {r['age']:<3} base {fmt_price(r['base']):>12} level {lvl:>12}  {'fresh' if r['fresh'] else 'stale':<5} "
                          f"avgx {avgx:<5} bodies {bodies}")
             if r["candles"]:
                 for c in r["candles"]:
