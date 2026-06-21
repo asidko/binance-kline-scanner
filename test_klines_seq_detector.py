@@ -69,24 +69,24 @@ print("PASS dominance out of (0,1] -> error exit 2"); ok += 1
 lvl_tail = [small(115, 114), small(114, 115)]   # red then green after -> reaction/consolidation
 r = js(baseline + up_run + lvl_tail, "--direction", "up", code=0)
 run0 = r["runs"][0]
-# level = post-run body FLOOR (up-run support): min(min(o,c)) over lvl_tail = 114; base = lowest low 99
-assert run0["type"] == "level" and run0["level"] == 114 and run0["base"] == 99, run0
+# level = body floor 114 nudged down by 0.33 * median low-wick (0.2) = 113.934; base = lowest low 99
+assert run0["type"] == "level" and round(run0["level"], 4) == 113.934 and run0["base"] == 99, run0
 down_run = [{"o": 100, "h": 101, "l": 94, "c": 95},
             {"o": 95, "h": 96, "l": 89, "c": 90},
             {"o": 90, "h": 91, "l": 84, "c": 85}]
 run0 = js(baseline + down_run + [small(85, 86), small(86, 85)], "--direction", "down", code=0)["runs"][0]
-# level = post-run body CEILING (down-run resistance): max(max(o,c)) over the two tail candles = 86; base = highest high 101
-assert run0["type"] == "level" and run0["level"] == 86 and run0["base"] == 101, run0
+# level = body ceiling 86 nudged up by 0.33 * median top-wick (0.2) = 86.066; base = highest high 101
+assert run0["type"] == "level" and round(run0["level"], 4) == 86.066 and run0["base"] == 101, run0
 stale_lvl = [{"o": 115, "h": 116, "l": 108, "c": 109}, small(110, 111)]   # red closes 109 < floor 110 (reclaim -> stale), then green -> level
 run0 = js(baseline + up_run + stale_lvl, "--direction", "up", code=0)["runs"][0]
-# post-run body floor over the two tail candles: min(109, 110) = 109
-assert run0["fresh"] is False and run0["type"] == "level" and run0["level"] == 109, run0   # level set regardless of freshness
+# body floor min(109,110)=109 nudged down by 0.33 * median underhang (median of 1.0 and 0.2 = 0.6) = 108.802
+assert run0["fresh"] is False and run0["type"] == "level" and round(run0["level"], 4) == 108.802, run0   # level set regardless of freshness
 r = js(baseline + up_run, "--direction", "up", code=0)
 assert r["runs"][0]["type"] == "ongoing" and r["runs"][0]["level"] is None, r["runs"][0]
-print("PASS level = body-biased top-wick avg for level runs (up/down/stale), null for ongoing"); ok += 1
+print("PASS level = body edge nudged into the typical wick (up/down/stale), null for ongoing"); ok += 1
 
 p = run(baseline + up_run + lvl_tail, "--direction", "up", "--format", "text", code=0)
-assert "level" in p.stdout and "114" in p.stdout, p.stdout   # truthy fmt_price branch in render_text
+assert "level" in p.stdout and "113.934" in p.stdout, p.stdout   # truthy fmt_price branch in render_text
 print("PASS --format text renders the level column for a level run"); ok += 1
 
 p = run([], code=1)

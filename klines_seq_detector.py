@@ -124,12 +124,21 @@ def run_base(seg: list[dict], d: int) -> float:
     return min(c["l"] for c in seg) if d == 1 else max(c["h"] for c in seg)
 
 
-def level_price(after: list[dict], d: int) -> float:
-    # edge of the consolidation rectangle the post-run candles form: down-run -> body ceiling
-    # (max body top = resistance), up-run -> body floor (min body bottom = support); wicks ignored
+LEVEL_WICK_BUFFER = 0.33  # fraction of the typical wick to leave between the level and the body cluster
+
+
+def level_price(after: list[dict], d: int, buffer: float = LEVEL_WICK_BUFFER) -> float:
+    # break level = the consolidation body edge nudged toward the wicks by a fraction of the TYPICAL
+    # (median) wick overhang, so it sits in the gap above/below the bodies, short of the wick tips.
+    # anchored at the body extreme (never cuts into the bodies), clamped to the wick extreme (never past
+    # it). median, not max, so one spike wick can't drag it out. down-run = resistance, up-run = support.
     if d == 1:
-        return min(min(c["o"], c["c"]) for c in after)
-    return max(max(c["o"], c["c"]) for c in after)
+        floor = min(min(c["o"], c["c"]) for c in after)
+        gap = buffer * statistics.median([min(c["o"], c["c"]) - c["l"] for c in after])
+        return max(floor - gap, min(c["l"] for c in after))
+    ceil = max(max(c["o"], c["c"]) for c in after)
+    gap = buffer * statistics.median([c["h"] - max(c["o"], c["c"]) for c in after])
+    return min(ceil + gap, max(c["h"] for c in after))
 
 
 AGE_BANDS = (8, 10, 15, 20, 25, 30, 40, 60)

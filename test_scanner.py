@@ -137,7 +137,7 @@ print("PASS fetch_klines casts OHLC to float, keeps open time, drops the unclose
 
 r, _ = run_scan(["LVL"], type_filter="level")
 assert [x["symbol"] for x in r] == ["LVL"] and r[0]["runs"][0]["type"] == "level", r
-assert r[0]["runs"][0]["level"] == 114 and r[0]["runs"][0]["base"] == 99, r[0]["runs"][0]
+assert round(r[0]["runs"][0]["level"], 4) == 113.934 and r[0]["runs"][0]["base"] == 99, r[0]["runs"][0]
 assert run_scan(["LVL"], type_filter="ongoing")[0] == [], "level must not match --type ongoing"
 r, _ = run_scan(["ONG"], type_filter="ongoing")
 assert [x["symbol"] for x in r] == ["ONG"] and r[0]["runs"][0]["type"] == "ongoing", r
@@ -152,7 +152,7 @@ out = {"params": {"count": 3, "dominance": 0.5, "metric": "median-body", "k": 1.
 txt = scanner.render_text(out)
 header, rows = txt.splitlines()[1], {ln.split()[0]: ln.split() for ln in txt.splitlines() if ln.strip()[:3] in ("LVL", "ONG")}
 assert "LEVEL" in header, header
-assert rows["LVL"][3] == "114" and rows["LVL"][7] == "99", rows["LVL"]   # level col, base col (STARTED sits between)
+assert rows["LVL"][3] == "113.934" and rows["LVL"][7] == "99", rows["LVL"]   # level col, base col (STARTED sits between)
 assert rows["ONG"][3] == "-", rows["ONG"]                                  # ongoing -> dash
 print("PASS scanner text renders LEVEL column: level price for level run, '-' for ongoing"); ok += 1
 
