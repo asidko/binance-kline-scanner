@@ -135,6 +135,15 @@ assert fk == [{"t": 0, "o": 1.5, "h": 2.0, "l": 1.0, "c": 1.8}], fk
 assert all(isinstance(fk[0][k], float) for k in ("o", "h", "l", "c")) and isinstance(fk[0]["t"], int), fk
 print("PASS fetch_klines casts OHLC to float, keeps open time, drops the unclosed last kline"); ok += 1
 
+scanner.urllib.request.urlopen = lambda url, timeout=10: _FakeResp({"symbols": [
+    {"symbol": "ETHUSDT", "status": "TRADING", "contractType": "PERPETUAL"},
+    {"symbol": "BTCUSDT", "status": "TRADING", "contractType": "PERPETUAL"},
+    {"symbol": "TSLAUSDT", "status": "TRADING", "contractType": "TRADIFI_PERPETUAL"},  # TradFi equity perp included
+    {"symbol": "DEADUSDT", "status": "SETTLING", "contractType": "PERPETUAL"},    # not trading -> dropped
+    {"symbol": "BTCUSDT_240927", "status": "TRADING", "contractType": "CURRENT_QUARTER"}]})  # delivery -> dropped
+assert scanner.fetch_all_symbols() == ["BTCUSDT", "ETHUSDT", "TSLAUSDT"], scanner.fetch_all_symbols()
+print("PASS --all-symbols pulls only trading perpetuals from exchangeInfo, sorted"); ok += 1
+
 r, _ = run_scan(["LVL"], type_filter="level")
 assert [x["symbol"] for x in r] == ["LVL"] and r[0]["runs"][0]["type"] == "level", r
 assert round(r[0]["runs"][0]["level"], 4) == 113.934 and r[0]["runs"][0]["base"] == 99, r[0]["runs"][0]

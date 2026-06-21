@@ -98,6 +98,11 @@ same-color "large" candles. Two pieces, one responsibility each.
   perps (`TRADIFI_PERPETUAL`: SPCXUSDT=SpaceX, OPENAIUSDT, TSLAUSDT, NVDAUSDT, ...). One per line,
   blank lines and `#` comments (incl. inline) ignored. Never assume a ticker is absent - query
   `/fapi/v1/exchangeInfo`.
+- `--all-symbols`: ignore the list, scan every actively trading USD-M perpetual. `fetch_all_symbols`
+  pulls `/fapi/v1/exchangeInfo` and keeps `status==TRADING` and `contractType in PERPETUAL_TYPES`
+  (`PERPETUAL` = crypto, `TRADIFI_PERPETUAL` = TradFi/pre-IPO equity perps - tradfi uses its OWN
+  contractType, so filtering on `PERPETUAL` alone silently drops every equity perp). ~650+ symbols;
+  bump `--workers` and expect a longer scan.
 - The repo `scan_symbols.txt` is the TEMPLATE (`BUNDLED_SYMBOLS_FILE`, shipped in the binary). The
   ACTIVE default list is `~/.config/bks/scan_symbols.txt` (`DEFAULT_SYMBOLS_FILE`; dir from
   `BKS_CONFIG_DIR` or XDG), auto-seeded from the template by `ensure_symbols_file()` on first run so

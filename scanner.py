@@ -17,6 +17,7 @@ bundled template on first run so you can edit it (override the dir with BKS_CONF
 Options:
   --symbols <list>     comma-separated symbols (overrides the file)
   --symbols-file <p>   symbol list file (default: ~/.config/bks/scan_symbols.txt)
+  --all-symbols        scan every trading USD-M perpetual on Binance (crypto + TradFi)
   --interval <tf>      kline interval (default 15m)
   --limit <n>          klines fetched per symbol (default 40)
   --workers <n>        parallel fetches, bounded pool 1..32 (default 8)
@@ -63,6 +64,8 @@ import klines_seq_detector as det
 import version
 
 FAPI_KLINES = "https://fapi.binance.com/fapi/v1/klines"
+FAPI_EXCHANGE_INFO = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+PERPETUAL_TYPES = ("PERPETUAL", "TRADIFI_PERPETUAL")  # crypto perps + TradFi/pre-IPO equity perps
 # template shipped with the code (repo file in source, bundled into the onefile binary)
 BUNDLED_SYMBOLS_FILE = Path(__file__).resolve().parent / "scan_symbols.txt"
 # user-editable copy, seeded from the template on first run; override the dir with BKS_CONFIG_DIR
@@ -100,6 +103,21 @@ def fetch_klines(symbol: str, interval: str, limit: int, retries: int = 2) -> li
                 time.sleep(min(wait, MAX_BACKOFF))
                 continue
             raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt < retries:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            raise
+
+
+def fetch_all_symbols(retries: int = 2) -> list[str]:
+    # every actively trading USD-M perpetual (crypto + TradFi equity perps) from exchangeInfo
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(FAPI_EXCHANGE_INFO, timeout=10) as resp:
+                data = json.load(resp)
+            return sorted(s["symbol"] for s in data["symbols"]
+                          if s.get("status") == "TRADING" and s.get("contractType") in PERPETUAL_TYPES)
         except (urllib.error.URLError, TimeoutError):
             if attempt < retries:
                 time.sleep(0.5 * (attempt + 1))
@@ -201,6 +219,7 @@ def main() -> int:
     parser.add_argument("--version", action=_VersionAction, help="show version and exit")
     parser.add_argument("--symbols", metavar="<list>")
     parser.add_argument("--symbols-file", metavar="<path>", type=Path, default=DEFAULT_SYMBOLS_FILE)
+    parser.add_argument("--all-symbols", action="store_true")
     parser.add_argument("--interval", metavar="<tf>", default="15m")
     parser.add_argument("--limit", metavar="<n>", type=int, default=40)
     parser.add_argument("--workers", metavar="<n>", type=int, default=8)
@@ -226,9 +245,12 @@ def main() -> int:
         "scanned": 0, "matched_count": 0, "elapsed_s": None, "errors": [], "results": [],
     }
     try:
-        if not args.symbols and args.symbols_file == DEFAULT_SYMBOLS_FILE and ensure_symbols_file():
-            print(f"created {DEFAULT_SYMBOLS_FILE} from the bundled list - edit it to choose what scans", file=sys.stderr)
-        symbols = load_symbols(args.symbols, args.symbols_file)
+        if args.all_symbols:
+            symbols = fetch_all_symbols()
+        else:
+            if not args.symbols and args.symbols_file == DEFAULT_SYMBOLS_FILE and ensure_symbols_file():
+                print(f"created {DEFAULT_SYMBOLS_FILE} from the bundled list - edit it to choose what scans", file=sys.stderr)
+            symbols = load_symbols(args.symbols, args.symbols_file)
     except OSError as exc:
         out["errors"] = [{"symbol": "-", "error": str(exc)}]
         _emit(out, args.format)

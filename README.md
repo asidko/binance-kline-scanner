@@ -54,6 +54,7 @@ More:
 bks --direction down             # bearish impulses only
 bks --type ongoing               # still-running moves (skip ones price already reacted to)
 bks --include-stale              # also show runs price has closed back into
+bks --all-symbols                # every Binance USD-M perp (crypto + TradFi), ~hundreds
 bks --symbols SOLUSDT,XRPUSDT    # these symbols instead of the watchlist
 bks --count 4 --k 2              # stricter: 4+ candles, bigger-than-usual bodies
 bks --interval 1h                # a different timeframe (default 15m)
@@ -73,7 +74,8 @@ matched, `1` none, `2` error.
 
 The default watchlist is liquid crypto alts plus TradFi / pre-IPO equity perps
 (TSLA, NVDA, SpaceX, OpenAI, ...). Edit `~/.config/bks/scan_symbols.txt` to change
-it, or override the dir with `BKS_CONFIG_DIR`.
+it, or override the dir with `BKS_CONFIG_DIR`. Or `--all-symbols` to skip the list
+and scan every trading USD-M perpetual Binance lists.
 
 ## Telegram alerts
 
