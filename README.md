@@ -76,13 +76,13 @@ it, or override the dir with `BKS_CONFIG_DIR`.
 
 Want a ping when price reaches a level? Install
 [binance-futures-monitor](https://github.com/asidko/binance-futures-monitor)
-(`bfm`) and pipe each `level` setup into it as a one-shot watch:
+(`bfm`), then turn the levels `bks` finds into alerts:
 
 ```
 bks --type level --format json | jq -r '.results[] | "\(.symbol) \(.runs[0].level)"' | xargs -L1 bfm add
 ```
 
-`bfm` then alerts (Telegram, etc.) when price hits each break level.
+`bfm` pings you (Telegram, etc.) when price hits any of them.
 
 ## How it works
 
