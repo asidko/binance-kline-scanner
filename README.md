@@ -53,12 +53,14 @@ multiples. Exit codes: `0` matched, `1` none, `2` error (`--exit-zero` to always
 exit 0).
 
 Symbols come from `--symbols` (comma list) or `--symbols-file` (one per line,
-`#` comments, inline comments allowed), defaulting to the bundled
-`scan_symbols.txt`.
+`#` comments, inline comments allowed). With neither, `bks` uses
+`~/.config/bks/scan_symbols.txt`, which it auto-creates from the bundled list on
+first run so you can edit what scans (override the dir with `BKS_CONFIG_DIR`).
 
 ## Symbols
 
-`scan_symbols.txt` ships two groups, both editable:
+The bundled default list ships two groups, both editable in
+`~/.config/bks/scan_symbols.txt`:
 
 - Crypto: liquid established USD-M perps (no BTC/ETH, no microcap memes).
 - TradFi / pre-IPO equity perps (Binance `TRADIFI_PERPETUAL`): SPCXUSDT (SpaceX),

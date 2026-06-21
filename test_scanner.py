@@ -1,6 +1,9 @@
 import json
 import os
+import pathlib
+import shutil
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import scanner
@@ -90,9 +93,21 @@ assert [r["symbol"] for r in results] == ["B"] and [e["symbol"] for e in errors]
 print("PASS per-symbol fetch error isolated, scan continues"); ok += 1
 
 assert scanner.load_symbols("doge,sol , xrp", scanner.DEFAULT_SYMBOLS_FILE) == ["DOGE", "SOL", "XRP"]
-from_file = scanner.load_symbols(None, scanner.DEFAULT_SYMBOLS_FILE)
+from_file = scanner.load_symbols(None, scanner.BUNDLED_SYMBOLS_FILE)
 assert "SOLUSDT" in from_file and "BTCUSDT" not in from_file and "ETHUSDT" not in from_file, from_file
 print("PASS load_symbols: --symbols parse + curated file (alts, no BTC/ETH)"); ok += 1
+
+_orig_default, _orig_dir = scanner.DEFAULT_SYMBOLS_FILE, scanner.CONFIG_DIR
+_seed_dir = pathlib.Path(tempfile.mkdtemp()) / "bks"
+scanner.CONFIG_DIR, scanner.DEFAULT_SYMBOLS_FILE = _seed_dir, _seed_dir / "scan_symbols.txt"
+try:
+    assert scanner.ensure_symbols_file() is True and scanner.DEFAULT_SYMBOLS_FILE.exists()  # first run seeds
+    assert scanner.DEFAULT_SYMBOLS_FILE.read_text() == scanner.BUNDLED_SYMBOLS_FILE.read_text()
+    assert scanner.ensure_symbols_file() is False                                            # second run is a no-op
+finally:
+    shutil.rmtree(_seed_dir.parent, ignore_errors=True)
+    scanner.DEFAULT_SYMBOLS_FILE, scanner.CONFIG_DIR = _orig_default, _orig_dir
+print("PASS ensure_symbols_file seeds the user list from the bundled template once"); ok += 1
 
 results, _ = run_scan(["ZZZ", "AAA"])
 assert [r["symbol"] for r in results] == ["AAA", "ZZZ"], results

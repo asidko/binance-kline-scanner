@@ -10,12 +10,13 @@ Usage:
   uv run ./scanner.py --symbols DOGEUSDT,SOLUSDT --format text
   uv run ./scanner.py --symbols-file my_list.txt --direction down --interval 1h
 
-Symbols come from --symbols (comma list) or --symbols-file (one per line, # comments),
-defaulting to scan_symbols.txt next to this script.
+Symbols come from --symbols (comma list) or --symbols-file (one per line, # comments).
+With neither, the default list is ~/.config/bks/scan_symbols.txt, auto-seeded from the
+bundled template on first run so you can edit it (override the dir with BKS_CONFIG_DIR).
 
 Options:
   --symbols <list>     comma-separated symbols (overrides the file)
-  --symbols-file <p>   symbol list file (default: scan_symbols.txt)
+  --symbols-file <p>   symbol list file (default: ~/.config/bks/scan_symbols.txt)
   --interval <tf>      kline interval (default 15m)
   --limit <n>          klines fetched per symbol (default 40)
   --workers <n>        parallel fetches, bounded pool 1..32 (default 8)
@@ -46,7 +47,9 @@ Examples:
 # nuitka-project: --onefile-tempdir-spec={CACHE_DIR}/bks/{VERSION}
 import argparse
 import json
+import os
 import random
+import shutil
 import sys
 import time
 import urllib.error
@@ -60,10 +63,24 @@ import klines_seq_detector as det
 import version
 
 FAPI_KLINES = "https://fapi.binance.com/fapi/v1/klines"
-DEFAULT_SYMBOLS_FILE = Path(__file__).resolve().parent / "scan_symbols.txt"
+# template shipped with the code (repo file in source, bundled into the onefile binary)
+BUNDLED_SYMBOLS_FILE = Path(__file__).resolve().parent / "scan_symbols.txt"
+# user-editable copy, seeded from the template on first run; override the dir with BKS_CONFIG_DIR
+CONFIG_DIR = Path(os.environ.get("BKS_CONFIG_DIR") or
+                  (Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "bks"))
+DEFAULT_SYMBOLS_FILE = CONFIG_DIR / "scan_symbols.txt"
 MAX_WORKERS = 32
 MAX_BACKOFF = 30.0
 JITTER = 0.1
+
+
+def ensure_symbols_file() -> bool:
+    """Seed the user-editable symbol list from the bundled template if absent. Returns True when created."""
+    if DEFAULT_SYMBOLS_FILE.exists():
+        return False
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(BUNDLED_SYMBOLS_FILE, DEFAULT_SYMBOLS_FILE)
+    return True
 
 
 def fetch_klines(symbol: str, interval: str, limit: int, retries: int = 2) -> list[dict]:
@@ -209,6 +226,8 @@ def main() -> int:
         "scanned": 0, "matched_count": 0, "elapsed_s": None, "errors": [], "results": [],
     }
     try:
+        if not args.symbols and args.symbols_file == DEFAULT_SYMBOLS_FILE and ensure_symbols_file():
+            print(f"created {DEFAULT_SYMBOLS_FILE} from the bundled list - edit it to choose what scans", file=sys.stderr)
         symbols = load_symbols(args.symbols, args.symbols_file)
     except OSError as exc:
         out["errors"] = [{"symbol": "-", "error": str(exc)}]

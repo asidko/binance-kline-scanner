@@ -94,6 +94,12 @@ same-color "large" candles. Two pieces, one responsibility each.
   perps (`TRADIFI_PERPETUAL`: SPCXUSDT=SpaceX, OPENAIUSDT, TSLAUSDT, NVDAUSDT, ...). One per line,
   blank lines and `#` comments (incl. inline) ignored. Never assume a ticker is absent - query
   `/fapi/v1/exchangeInfo`.
+- The repo `scan_symbols.txt` is the TEMPLATE (`BUNDLED_SYMBOLS_FILE`, shipped in the binary). The
+  ACTIVE default list is `~/.config/bks/scan_symbols.txt` (`DEFAULT_SYMBOLS_FILE`; dir from
+  `BKS_CONFIG_DIR` or XDG), auto-seeded from the template by `ensure_symbols_file()` on first run so
+  the bundled list inside the read-only onefile stays editable. Seeding fires only when no
+  `--symbols` and the default `--symbols-file` is in use - an explicit `--symbols-file` or
+  `--symbols` never seeds. Tests stub `CONFIG_DIR`/`DEFAULT_SYMBOLS_FILE` to a tempdir.
 
 ## Conventions
 - Plain ASCII only. Type hints on every function. DRY: extract shared logic into a helper.
@@ -106,9 +112,10 @@ same-color "large" candles. Two pieces, one responsibility each.
   -> `dist/bks-<os>-<arch>`. Nuitka flags live in `# nuitka-project:` comments at the top of
   `scanner.py`, so source and CI builds stay identical; `build.py` only stamps version + names the
   artifact per OS/arch.
-- `scan_symbols.txt` is bundled via `--include-data-files`; `DEFAULT_SYMBOLS_FILE` resolves next to
-  `__file__`, which points into the onefile unpack dir at runtime, so the default list ships in the
-  binary. Anything the scanner reads from disk by default MUST be bundled the same way.
+- `scan_symbols.txt` is bundled via `--include-data-files`; `BUNDLED_SYMBOLS_FILE` resolves next to
+  `__file__`, which points into the onefile unpack dir at runtime, so the template ships in the
+  binary (then `ensure_symbols_file()` copies it to `~/.config/bks/` - see Symbols). Anything the
+  scanner reads from disk by default MUST be bundled the same way.
 - `version.py` reports version + commit: from source it reads `pyproject.toml` + live git; a frozen
   binary reads `_build.py` (stamped by `build.py`, gitignored), detected via `__main__.__compiled__`.
   `--version` prints the banner.
