@@ -72,6 +72,18 @@ The default watchlist is liquid crypto alts plus TradFi / pre-IPO equity perps
 (TSLA, NVDA, SpaceX, OpenAI, ...). Edit `~/.config/bks/scan_symbols.txt` to change
 it, or override the dir with `BKS_CONFIG_DIR`.
 
+## Telegram alerts
+
+Want a ping when price reaches a level? Install
+[binance-futures-monitor](https://github.com/asidko/binance-futures-monitor)
+(`bfm`) and pipe each `level` setup into it as a one-shot watch:
+
+```
+bks --type level --format json | jq -r '.results[] | "\(.symbol) \(.runs[0].level)"' | xargs -L1 bfm add
+```
+
+`bfm` then alerts (Telegram, etc.) when price hits each break level.
+
 ## How it works
 
 Two pieces, wired by import:
