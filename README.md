@@ -79,7 +79,8 @@ Want a ping when price reaches a level? Install
 (`bfm`), then turn the levels `bks` finds into alerts:
 
 ```
-bks --type level --format json | jq -r '.results[] | "--symbol \(.symbol) --level \(.runs[0].level)"' | xargs -L1 bfm add
+bks --type level --format json | jq -r '.results[] | "\(.symbol) \(.runs[0].level)"' \
+  | while read sym lvl; do bfm add --symbol "$sym" --level "$lvl"; done
 ```
 
 `bfm` pings you (Telegram, etc.) when price hits any of them.
