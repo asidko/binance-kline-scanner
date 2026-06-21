@@ -24,8 +24,16 @@ Prebuilt single-file binary (Linux / macOS, x86_64 / arm64), no Python needed:
 curl -fsSL https://raw.githubusercontent.com/asidko/binance-kline-scanner/main/install.sh | sh
 ```
 
-Installs `bks` to `~/.local/bin`. Remove with `... | sh -s -- --remove`, or grab
-a binary from the [latest release](https://github.com/asidko/binance-kline-scanner/releases/latest).
+This drops `bks` into `~/.local/bin`. To uninstall, run the same line with
+`--remove` appended:
+
+```
+curl -fsSL https://raw.githubusercontent.com/asidko/binance-kline-scanner/main/install.sh | sh -s -- --remove
+```
+
+Prefer to do it by hand? Download a binary from the
+[latest release](https://github.com/asidko/binance-kline-scanner/releases/latest)
+and `chmod +x` it.
 
 ## Use
 
