@@ -35,6 +35,9 @@ Prefer to do it by hand? Download a binary from the
 [latest release](https://github.com/asidko/binance-kline-scanner/releases/latest)
 and `chmod +x` it.
 
+**Android (Termux):** the same `curl ... | sh` line works - arm64 gets a
+prebuilt binary; other arches build from source (`pkg install python` first).
+
 ## Use
 
 ```

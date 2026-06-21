@@ -42,13 +42,17 @@ same-color "large" candles. Two pieces, one responsibility each.
   after = reaction/zone formed) vs `ongoing` (one color, or nothing, after = move still running).
   Always emitted in output; `--type ongoing|level` filters, `both` (default) does not.
 - `level`: the break level a `level`-type run prints. It is NOT a stat of the run - it is the edge
-  of the consolidation rectangle the candles AFTER the run form (the reaction zone). Down-run: the
-  body CEILING (`max(max(open,close))` over the post-run candles = resistance). Up-run: the body
-  FLOOR (`min(min(open,close))` = support). Bodies only - wicks poke out of the rectangle and are
-  ignored. Computed from `candles[end+1:]`, which is non-empty exactly when the run is `level`-type
-  (a red and a green closed after), so only `level` runs get a `level`; `ongoing` runs get `None`.
-  Distinct from `base` (the lowest-low/highest-high freshness pivot inside the run). The unclosed
-  last candle is excluded upstream, so the rectangle never jitters mid-candle.
+  of the consolidation rectangle the candles AFTER the run form (the reaction zone), nudged off the
+  bodies into the wick gap so it does not sit flush on the body cluster. Anchor at the body extreme
+  (down-run: body CEILING `max(max(open,close))` = resistance; up-run: body FLOOR `min(min(open,close))`
+  = support), then push toward the wicks by `LEVEL_WICK_BUFFER` (0.33) x the TYPICAL wick overhang -
+  `statistics.median` of per-candle `high - bodytop` (down) / `bodybottom - low` (up), MEDIAN not max
+  so one spike wick can't drag it out. Clamp to the wick extreme (`max(high)` / `min(low)`) so it never
+  passes the wicks. Anchoring at the body extreme keeps the level from ever cutting INSIDE the bodies
+  (a median-of-bodies center would - rejected). Computed from `candles[end+1:]`, non-empty exactly when
+  the run is `level`-type (a red and a green closed after), so only `level` runs get a `level`;
+  `ongoing` runs get `None`. Distinct from `base` (the lowest-low/highest-high freshness pivot inside
+  the run). The unclosed last candle is excluded upstream, so the rectangle never jitters mid-candle.
 - Ranking (runs within a window, and symbols within a scan) is lexicographic by user priority via
   the shared `rank_key`: 1) recency as an AGE BAND (`age_bucket`), 2) length, 3) body size
   (`body_mult_mean`), 4) exact `age`, then symbol for deterministic ties. Never a weighted score -
@@ -124,6 +128,13 @@ same-color "large" candles. Two pieces, one responsibility each.
 - CI: `.github/workflows/ci.yml` runs `ruff check .` + both test scripts on push/PR.
   `release.yml` builds the binary per-OS (linux x86_64/arm64, macos arm64) on a `v*` tag, smoke-tests
   `--version`/`--help`, and publishes binaries + `SHA256SUMS`. `install.sh` verifies that checksum.
+- Android/Termux is bionic, not glibc, and GitHub has no Android runner. `release.yml`'s `build-android`
+  job builds inside `termux/termux-docker:aarch64` under QEMU (emulated arm64, slow) and ships
+  `bks-android-arm64`. `build.py` names it `android-*` (detects `com.termux` in `$PREFIX`) so it never
+  collides with the glibc `linux-*` build. `install.sh` detects Termux (`$PREFIX`/`$TERMUX_VERSION`):
+  arm64 downloads that prebuilt binary (checksum-verified, into `$PREFIX/bin`); other arches fall back to
+  `install_termux` - SOURCE install (`.py` + `pyproject.toml` + `scan_symbols.txt` into `$PREFIX/share/bks`
+  + a `bks` shim running `python3 scanner.py`). Source path works only because the tool is stdlib-only.
 
 ## Testing (before claiming done)
 - `python3 test_klines_seq_detector.py` - synthetic detector cases incl. flat-window guard, no network.

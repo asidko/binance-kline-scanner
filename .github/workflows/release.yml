@@ -37,8 +37,39 @@ jobs:
           name: bks-${{ matrix.os }}
           path: dist/bks-*
 
+  build-android:
+    # Android is bionic, not glibc, and GitHub has no Android runner - build inside the Termux
+    # image under QEMU (emulated aarch64). Slow but produces a binary that runs in Termux.
+    # Best-effort: if the emulated build flakes it must NOT block the linux/macOS release.
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: build in Termux (aarch64, emulated)
+        run: |
+          chmod -R a+w .
+          docker run --rm --privileged --platform linux/arm64 -v "$PWD":/build -w /build \
+            termux/termux-docker:aarch64 bash -c '
+              set -e
+              apt update -yq && apt install -yq python clang binutils patchelf
+              pip install --no-input nuitka zstandard
+              python build.py
+            '
+      - name: smoke test the built binary (emulated)
+        run: |
+          docker run --rm --privileged --platform linux/arm64 -v "$PWD":/build -w /build \
+            termux/termux-docker:aarch64 bash -c '
+              bin=$(ls dist/bks-android-*); "$bin" --version; "$bin" --help >/dev/null'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bks-android
+          path: dist/bks-android-*
+
   release:
-    needs: build
+    needs: [build, build-android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -69,6 +100,7 @@ jobs:
             ## Platforms
             - Linux x86_64 and arm64
             - macOS arm64 (Apple Silicon). On Intel Macs, build from source.
+            - Android (Termux): `pkg install python`, then run the install line - it installs from source (stdlib only).
 
             ## Install
 

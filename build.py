@@ -5,6 +5,7 @@ Run via `uv run python build.py`. Build flags live next to the code in
 `scanner.py` (nuitka-project comments); this script only invokes Nuitka and
 names the artifact per OS/arch. CI calls this exact command on each runner.
 """
+import os
 import platform
 import subprocess
 import sys
@@ -19,7 +20,8 @@ _ARCH = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "arm64", "arm64": "ar
 
 
 def _target() -> str:
-    osname = _OS.get(platform.system(), platform.system().lower())
+    # Termux/Android is bionic, not glibc - name it apart so it never collides with the linux build
+    osname = "android" if "com.termux" in os.environ.get("PREFIX", "") else _OS.get(platform.system(), platform.system().lower())
     arch = _ARCH.get(platform.machine().lower(), platform.machine().lower())
     return f"bks-{osname}-{arch}"
 

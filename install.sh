@@ -1,5 +1,6 @@
 #!/bin/sh
 # install.sh - fetch a bks release binary for this OS/arch (latest by default).
+# Termux (Android, bionic): arm64 has a prebuilt binary; other arches install from source.
 #   curl -fsSL https://raw.githubusercontent.com/asidko/binance-kline-scanner/main/install.sh | sh
 #   curl -fsSL .../install.sh | sh -s -- --tag v1.0.0     # pin a version
 #   curl -fsSL .../install.sh | sh -s -- --remove
@@ -10,15 +11,44 @@ BIN="bks"
 INSTALL_DIR="${BKS_INSTALL_DIR:-$HOME/.local/bin}"
 TAG=""
 OS=$(uname -s)
+TERMUX_LIB="${PREFIX:-}/share/bks"
+
+is_termux() {
+    case "${PREFIX:-}" in *com.termux*) return 0 ;; esac
+    [ -n "${TERMUX_VERSION:-}" ]
+}
+
+# Termux is Android/bionic - the glibc release binaries can't run there. Install from source instead
+# (stdlib only) and drop a shim that runs it with Termux's Python.
+install_termux() {
+    command -v python3 >/dev/null 2>&1 || { echo "python3 missing - run: pkg install python" >&2; exit 1; }
+    ref="${TAG:-main}"
+    raw="https://raw.githubusercontent.com/${REPO}/${ref}"
+    bindir="${BKS_INSTALL_DIR:-$PREFIX/bin}"
+    mkdir -p "$bindir" "$TERMUX_LIB"
+    echo "Termux: installing bks from source (${ref})"
+    for f in scanner.py klines_seq_detector.py version.py pyproject.toml scan_symbols.txt; do
+        curl -fSL "$raw/$f" -o "$TERMUX_LIB/$f"
+    done
+    printf '#!%s/bin/sh\nexec python3 "%s/scanner.py" "$@"\n' "$PREFIX" "$TERMUX_LIB" > "$bindir/$BIN"
+    chmod 755 "$bindir/$BIN"
+    echo "installed $bindir/$BIN"
+    "$bindir/$BIN" --version 2>/dev/null || true
+    echo "done. run: $BIN --help"
+    exit 0
+}
 
 detect_target() {
-    os=$OS
     arch=$(uname -m)
-    case "$os" in
-        Linux) os=linux ;;
-        Darwin) os=macos ;;
-        *) echo "unsupported OS: $os" >&2; exit 1 ;;
-    esac
+    if is_termux; then
+        os=android
+    else
+        case "$OS" in
+            Linux) os=linux ;;
+            Darwin) os=macos ;;
+            *) echo "unsupported OS: $OS" >&2; exit 1 ;;
+        esac
+    fi
     case "$arch" in
         x86_64|amd64) arch=x86_64 ;;
         aarch64|arm64) arch=arm64 ;;
@@ -28,6 +58,12 @@ detect_target() {
 }
 
 do_remove() {
+    if is_termux; then
+        rm -f "${BKS_INSTALL_DIR:-$PREFIX/bin}/$BIN"
+        rm -rf "$TERMUX_LIB"
+        echo "removed $BIN (Termux source install)"
+        exit 0
+    fi
     if [ -f "$INSTALL_DIR/$BIN" ]; then
         rm -f "$INSTALL_DIR/$BIN"
         echo "removed $INSTALL_DIR/$BIN"
@@ -47,6 +83,15 @@ while [ $# -gt 0 ]; do
 done
 
 command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
+
+# Termux arm64 has a prebuilt binary (built under emulation in CI); other Termux arches build from source
+if is_termux; then
+    INSTALL_DIR="${BKS_INSTALL_DIR:-$PREFIX/bin}"
+    case "$(uname -m)" in
+        aarch64|arm64) ;;
+        *) install_termux ;;
+    esac
+fi
 
 target=$(detect_target)
 if [ "$target" = "macos-x86_64" ]; then
