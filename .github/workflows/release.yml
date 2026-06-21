@@ -54,7 +54,7 @@ jobs:
           docker run --rm --privileged --platform linux/arm64 -v "$PWD":/build -w /build \
             termux/termux-docker:aarch64 bash -c '
               set -e
-              apt update -yq && apt install -yq python clang binutils patchelf
+              apt update -yq && apt install -yq python clang binutils patchelf termux-elf-cleaner
               pip install --no-input nuitka zstandard
               python build.py
             '
