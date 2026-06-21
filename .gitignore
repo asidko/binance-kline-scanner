@@ -1,3 +1,9 @@
 .venv/
 __pycache__/
 *.pyc
+_build.py
+dist/
+build/
+*.build/
+*.dist/
+*.onefile-build/

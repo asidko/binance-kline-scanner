@@ -116,8 +116,9 @@ class _FakeResp:
 scanner.urllib.request.urlopen = lambda url, timeout=10: _FakeResp(
     [[0, "1.5", "2.0", "1.0", "1.8", "9"], [1, "9", "9", "9", "9", "9"]])  # 2nd row = the still-forming candle
 fk = scanner.fetch_klines("X", "15m", 40)
-assert fk == [{"o": 1.5, "h": 2.0, "l": 1.0, "c": 1.8}] and all(isinstance(v, float) for v in fk[0].values()), fk
-print("PASS fetch_klines casts to float and drops the unclosed last kline"); ok += 1
+assert fk == [{"t": 0, "o": 1.5, "h": 2.0, "l": 1.0, "c": 1.8}], fk
+assert all(isinstance(fk[0][k], float) for k in ("o", "h", "l", "c")) and isinstance(fk[0]["t"], int), fk
+print("PASS fetch_klines casts OHLC to float, keeps open time, drops the unclosed last kline"); ok += 1
 
 r, _ = run_scan(["LVL"], type_filter="level")
 assert [x["symbol"] for x in r] == ["LVL"] and r[0]["runs"][0]["type"] == "level", r
@@ -136,9 +137,16 @@ out = {"params": {"count": 3, "dominance": 0.5, "metric": "median-body", "k": 1.
 txt = scanner.render_text(out)
 header, rows = txt.splitlines()[1], {ln.split()[0]: ln.split() for ln in txt.splitlines() if ln.strip()[:3] in ("LVL", "ONG")}
 assert "LEVEL" in header, header
-assert rows["LVL"][3] == "114" and rows["LVL"][6] == "99", rows["LVL"]   # level col, base col
+assert rows["LVL"][3] == "114" and rows["LVL"][7] == "99", rows["LVL"]   # level col, base col (STARTED sits between)
 assert rows["ONG"][3] == "-", rows["ONG"]                                  # ongoing -> dash
 print("PASS scanner text renders LEVEL column: level price for level run, '-' for ongoing"); ok += 1
+
+T0 = 1_718_900_000_000   # fixed ms epoch; 15m candles step 900_000 ms
+res, _ = scanner.scan(["LVL"], lambda s, i, l: [{**c, "t": T0 + n * 900_000} for n, c in enumerate(WINDOWS["LVL"])],
+                      3, 0.5, "median-body", 1.5, 14, "up", "both", True, False, "15m", 40)
+run = res[0]["runs"][0]
+assert run["started_at"] == scanner._iso_utc(T0 + run["start"] * 900_000) and run["started_at"].endswith("Z"), run["started_at"]
+print("PASS started_at maps run start index to the kline open time (UTC ISO with T and Z)"); ok += 1
 
 r, _ = run_scan(["WK"], dominance=0.5)
 assert [x["symbol"] for x in r] == ["WK"] and r[0]["runs"][0]["length"] == 3, r

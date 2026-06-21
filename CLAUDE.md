@@ -58,7 +58,13 @@ same-color "large" candles. Two pieces, one responsibility each.
   scanner MUST share `rank_key` - never re-derive the order in two places.
 
 ## Output contract (stable - other tools parse it)
-- `--format json` (default, machine) | `text` (human). Same information in both.
+- `--format` `json` (machine) | `text` (human). Same information in both. The detector defaults to
+  `json` (it is a pipe/lib filter for tools); the scanner defaults to `text` (human-facing CLI).
+- `started_at`: each run carries the UTC open time of its first candle as an ISO string with `T`
+  and `Z` (`2026-06-20T17:45:00Z`); with `length` x `interval` the caller derives the exact range.
+  The detector stays time-agnostic (it only knows indices) - the SCANNER adds `started_at` by
+  mapping the run's `start` index to the kline `openTime` it kept in `fetch_klines` (the `t` field).
+  Standalone detector output has no `started_at`; it is `None` if a candle lacks `t`.
 - Exit codes: 0 = matched, 1 = no match, 2 = error. `--exit-zero` forces 0 for callers that parse.
 - Fixed JSON shape regardless of flags: always-present keys, `error`/`warning` null when absent,
   a stable `unit` (the per-candle yardstick) + `metric` name (never `median_body` xor `atr`).
@@ -93,6 +99,24 @@ same-color "large" candles. Two pieces, one responsibility each.
 - Plain ASCII only. Type hints on every function. DRY: extract shared logic into a helper.
 - No magic literals for shared conventions; name a constant next to what it describes.
 - Comments default to NONE; add only when the WHY is non-obvious. Never restate WHAT the code does.
+
+## Packaging / release
+- Ships as `bks`, a single Nuitka onefile binary of `scanner.py` (the scanner is the only
+  user-facing CLI; the detector stays a source-level pipe/lib). Build with `uv run python build.py`
+  -> `dist/bks-<os>-<arch>`. Nuitka flags live in `# nuitka-project:` comments at the top of
+  `scanner.py`, so source and CI builds stay identical; `build.py` only stamps version + names the
+  artifact per OS/arch.
+- `scan_symbols.txt` is bundled via `--include-data-files`; `DEFAULT_SYMBOLS_FILE` resolves next to
+  `__file__`, which points into the onefile unpack dir at runtime, so the default list ships in the
+  binary. Anything the scanner reads from disk by default MUST be bundled the same way.
+- `version.py` reports version + commit: from source it reads `pyproject.toml` + live git; a frozen
+  binary reads `_build.py` (stamped by `build.py`, gitignored), detected via `__main__.__compiled__`.
+  `--version` prints the banner.
+- Pinned to Python 3.13 (`.python-version`, `requires-python >=3.13`) - Nuitka support, not 3.14.
+  Runtime deps stay empty (`dependencies = []`); `nuitka`/`ruff`/`zstandard` are dev-only.
+- CI: `.github/workflows/ci.yml` runs `ruff check .` + both test scripts on push/PR.
+  `release.yml` builds the binary per-OS (linux x86_64/arm64, macos arm64) on a `v*` tag, smoke-tests
+  `--version`/`--help`, and publishes binaries + `SHA256SUMS`. `install.sh` verifies that checksum.
 
 ## Testing (before claiming done)
 - `python3 test_klines_seq_detector.py` - synthetic detector cases incl. flat-window guard, no network.

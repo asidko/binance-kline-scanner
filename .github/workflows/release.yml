@@ -1,0 +1,106 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04      # linux x86_64 (older glibc -> runs on more boxes)
+          - os: ubuntu-22.04-arm  # linux arm64 (Pi, Graviton, ARM VPS)
+          - os: macos-14          # macOS arm64 (Apple Silicon); Intel macs build from source
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+      - run: uv sync --dev
+      - run: uv run python build.py
+      - name: smoke test the built binary
+        run: |
+          bin=$(ls dist/bks-*)
+          "$bin" --version
+          "$bin" --help >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bks-${{ matrix.os }}
+          path: dist/bks-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: collect binaries and checksums
+        run: |
+          mkdir -p out
+          find artifacts -type f -name 'bks-*' -exec cp {} out/ \;
+          cd out && sha256sum bks-* > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
+        with:
+          files: out/*
+          name: ${{ github.ref_name }} - fresh impulse scanner for Binance futures
+          body: |
+            **bks** screens Binance USD-M futures for fresh impulse setups: runs of N consecutive same-color "large" candles, ranked best-first. One small binary, no Python needed.
+
+            ## Highlights
+            - Single self-contained binary. No Python, no dependencies to install.
+            - Scans your symbol list in parallel and ranks matches by recency band, run length, then body size.
+            - Freshness filter keeps only setups no later candle has closed back into.
+            - Classifies each run as `level` (reaction zone formed, prints the break level) or `ongoing` (still moving).
+            - Text table for eyes, JSON for tools - same information, full precision.
+
+            ## Platforms
+            - Linux x86_64 and arm64
+            - macOS arm64 (Apple Silicon). On Intel Macs, build from source.
+
+            ## Install
+
+            Installs `bks` to `~/.local/bin` (auto-detects OS/arch, verifies the SHA256 checksum):
+
+            ```
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- --tag ${{ github.ref_name }}
+            ```
+
+            ### Manual
+
+            Download the asset for your platform plus `SHA256SUMS`, verify, then install:
+
+            ```
+            sha256sum -c SHA256SUMS --ignore-missing      # macOS: shasum -a 256 -c
+
+            # user-local (no sudo) - make sure ~/.local/bin is on your PATH
+            chmod +x bks-* && mkdir -p ~/.local/bin && mv bks-* ~/.local/bin/bks
+
+            # system-wide (sudo)
+            chmod +x bks-* && sudo mv bks-* /usr/local/bin/bks
+            ```
+
+            macOS: clear the Gatekeeper quarantine flag before first run:
+
+            ```
+            xattr -d com.apple.quarantine ~/.local/bin/bks
+            ```
+
+            ## Quickstart
+
+            ```
+            bks --format text                       # scan the bundled list, ranked table
+            bks --symbols SOLUSDT,DOGEUSDT --count 3 # specific symbols
+            ```

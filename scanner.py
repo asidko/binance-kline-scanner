@@ -29,13 +29,21 @@ Options:
   --type <t>           both (default) | ongoing (one color after) | level (red+green after)
   --include-stale      also report runs whose base is already broken (default: fresh only)
   --candles            include each run's full OHLC
-  --format <fmt>       json (default) | text
+  --format <fmt>       text (default) | json
   --exit-zero          always exit 0 (default: 0 matched / 1 none / 2 error)
 
 Examples:
   uv run ./scanner.py --direction down --format text
   uv run ./scanner.py --symbols SOLUSDT,XRPUSDT --count 3 --k 2
 """
+# Build flags for `nuitka` (a portable single-file binary). Applied whenever
+# nuitka compiles this module, so source and CI builds stay identical.
+# nuitka-project: --onefile
+# nuitka-project: --output-dir={MAIN_DIRECTORY}/dist
+# nuitka-project: --output-filename=bks
+# nuitka-project: --include-data-files={MAIN_DIRECTORY}/scan_symbols.txt=scan_symbols.txt
+# nuitka-project: --assume-yes-for-downloads
+# nuitka-project: --onefile-tempdir-spec={CACHE_DIR}/bks/{VERSION}
 import argparse
 import json
 import random
@@ -45,9 +53,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 
 import klines_seq_detector as det
+import version
 
 FAPI_KLINES = "https://fapi.binance.com/fapi/v1/klines"
 DEFAULT_SYMBOLS_FILE = Path(__file__).resolve().parent / "scan_symbols.txt"
@@ -65,7 +75,7 @@ def fetch_klines(symbol: str, interval: str, limit: int, retries: int = 2) -> li
         try:
             with urllib.request.urlopen(url, timeout=10) as resp:
                 rows = json.load(resp)
-            return [{"o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4])} for r in rows[:-1]]
+            return [{"t": int(r[0]), "o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4])} for r in rows[:-1]]
         except urllib.error.HTTPError as exc:
             retry_after = exc.headers.get("Retry-After", "1")
             wait = float(retry_after) if retry_after.isdigit() else 1.0
@@ -95,6 +105,10 @@ def _priority(entry: dict) -> tuple:
     return (*det.rank_key(entry["runs"][0]), entry["symbol"])
 
 
+def _iso_utc(ts_ms: int) -> str:
+    return datetime.fromtimestamp(ts_ms / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def scan(symbols: list[str], fetch, count: int, dominance: float, metric: str, k: float, atr_period: int, direction: str,
          type_filter: str, fresh: bool, with_candles: bool, interval: str, limit: int, workers: int = 8) -> tuple[list[dict], list[dict]]:
     results: list[dict] = []
@@ -102,7 +116,11 @@ def scan(symbols: list[str], fetch, count: int, dominance: float, metric: str, k
 
     def analyze(symbol: str) -> dict:
         candles = fetch(symbol, interval, limit)
-        return det.run_detection(candles, count, dominance, metric, k, atr_period, direction, type_filter, fresh, with_candles)
+        res = det.run_detection(candles, count, dominance, metric, k, atr_period, direction, type_filter, fresh, with_candles)
+        for run in res["runs"]:  # detector is time-agnostic; map its start index to the kline open time here
+            t = candles[run["start"]].get("t")
+            run["started_at"] = _iso_utc(t) if t is not None else None
+        return res
 
     with ThreadPoolExecutor(max_workers=max(1, min(workers, MAX_WORKERS))) as pool:
         futures = {pool.submit(analyze, s): s for s in symbols}
@@ -129,14 +147,14 @@ def render_text(out: dict) -> str:
              f"{p['count']}+ {dirn} {p['metric']}, k={p['k']:g}, dom={p['dominance']:g}, {fresh}, {p['interval']} x{p['limit']}. "
              f"Ranked by recency band, length, body."]
     if out["results"]:
-        lines.append(f"  {'SYMBOL':<12} {'DIR':<4} {'TYPE':<7} {'LEVEL':>13} {'AGE':>3} {'LEN':>3} {'BASE':>13} {'STATE':<5} {'AVGX':>5}  BODIES")
+        lines.append(f"  {'SYMBOL':<12} {'DIR':<4} {'TYPE':<7} {'LEVEL':>13} {'AGE':>3} {'LEN':>3} {'STARTED':<20} {'BASE':>13} {'STATE':<5} {'AVGX':>5}  BODIES")
         for e in out["results"]:
             t = e["runs"][0]
             avgx = f"{t['body_mult_mean']:g}" if t["body_mult_mean"] is not None else "-"
             bodies = "/".join(f"{m:g}" if m is not None else "-" for m in t["body_mults"])
             lvl = det.fmt_price(t["level"]) if t["level"] is not None else "-"
             lines.append(f"  {e['symbol']:<12} {t['direction']:<4} {t['type']:<7} {lvl:>13} {t['age']:>3} {t['length']:>3} "
-                         f"{det.fmt_price(t['base']):>13} {'fresh' if t['fresh'] else 'stale':<5} {avgx:>5}  {bodies}")
+                         f"{t['started_at'] or '-':<20} {det.fmt_price(t['base']):>13} {'fresh' if t['fresh'] else 'stale':<5} {avgx:>5}  {bodies}")
     for e in out["errors"]:
         lines.append(f"  ! {e['symbol']}: {e['error']}")
     return "\n".join(lines)
@@ -146,12 +164,24 @@ def _emit(out: dict, fmt: str) -> None:
     print(render_text(out) if fmt == "text" else json.dumps(out))
 
 
+class _VersionAction(argparse.Action):
+    # build the banner only when --version is actually passed; version.banner()
+    # forks git + reads pyproject, wasted on every scan if evaluated eagerly
+    def __init__(self, option_strings: list[str], dest: str, **kw) -> None:
+        super().__init__(option_strings, dest, nargs=0, default=argparse.SUPPRESS, **kw)
+
+    def __call__(self, parser, namespace, values, option_string=None) -> None:
+        print(version.banner())
+        parser.exit()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__.strip().splitlines()[0],
         epilog=__doc__[__doc__.index("Examples:"):].rstrip(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action=_VersionAction, help="show version and exit")
     parser.add_argument("--symbols", metavar="<list>")
     parser.add_argument("--symbols-file", metavar="<path>", type=Path, default=DEFAULT_SYMBOLS_FILE)
     parser.add_argument("--interval", metavar="<tf>", default="15m")
@@ -166,7 +196,7 @@ def main() -> int:
     parser.add_argument("--type", choices=["both", "ongoing", "level"], default="both", metavar="<t>")
     parser.add_argument("--include-stale", action="store_true")
     parser.add_argument("--candles", action="store_true")
-    parser.add_argument("--format", choices=["json", "text"], default="json", metavar="<fmt>")
+    parser.add_argument("--format", choices=["json", "text"], default="text", metavar="<fmt>")
     parser.add_argument("--exit-zero", action="store_true")
     args = parser.parse_args()
 

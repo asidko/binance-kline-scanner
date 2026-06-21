@@ -50,14 +50,14 @@ def parse_candles(raw: str) -> list[dict]:
     out: list[dict] = []
     for i, k in enumerate(data):
         if isinstance(k, dict):
-            o, h, l, c = k.get("o", k.get("open")), k.get("h", k.get("high")), k.get("l", k.get("low")), k.get("c", k.get("close"))
+            o, h, lo, c = k.get("o", k.get("open")), k.get("h", k.get("high")), k.get("l", k.get("low")), k.get("c", k.get("close"))
         elif isinstance(k, (list, tuple)) and len(k) >= 5:
-            o, h, l, c = k[1], k[2], k[3], k[4]
+            o, h, lo, c = k[1], k[2], k[3], k[4]
         else:
             raise ValueError(f"candle {i}: expected an object or a Binance kline array")
-        if None in (o, h, l, c):
+        if None in (o, h, lo, c):
             raise ValueError(f"candle {i}: missing one of o/h/l/c")
-        out.append({"o": float(o), "h": float(h), "l": float(l), "c": float(c)})
+        out.append({"o": float(o), "h": float(h), "l": float(lo), "c": float(c)})
     return out
 
 
