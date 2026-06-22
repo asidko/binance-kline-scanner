@@ -32,7 +32,7 @@ jobs:
           bin=$(ls dist/bks-*)
           "$bin" --version
           "$bin" --help >/dev/null
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bks-${{ matrix.os }}
           path: dist/bks-*
@@ -60,7 +60,7 @@ jobs:
           docker run --rm --privileged -v "$PWD":/build -w /build \
             termux/termux-docker:aarch64 bash -c '
               bin=$(ls dist/bks-android-*); "$bin" --version; "$bin" --help >/dev/null'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bks-android
           path: dist/bks-android-*
