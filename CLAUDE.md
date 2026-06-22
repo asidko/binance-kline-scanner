@@ -74,7 +74,9 @@ same-color "large" candles. Two pieces, one responsibility each.
   a stable `unit` (the per-candle yardstick) + `metric` name (never `median_body` xor `atr`).
   Detector top-level `matched` is a BOOL; the scanner envelope uses `matched_count` (int) - do
   not reuse the same key name for both.
-- Text mode: aligned columns + a header + a summary line (counts, elapsed, ranking order). Format
+- Text mode: aligned columns + a header + a summary line (counts, elapsed, ranking order). Core
+  columns by default (symbol, dir, type, level, age, len, started); `--full` (text only) appends
+  base, state, avgx, bodies. JSON is unaffected by `--full` - it always carries every field. Format
   prices through the shared `det.fmt_price` so TSLA (~400), DOGE (~0.08) and microcaps all read
   consistently and never flip to scientific notation. JSON numbers stay full-precision - beautify
   text only. Scanner prints a one-line `scanning ...` preamble to STDERR (keeps stdout clean).

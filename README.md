@@ -58,6 +58,7 @@ bks --all-symbols                # every Binance USD-M perp (crypto + TradFi), ~
 bks --symbols SOLUSDT,XRPUSDT    # these symbols instead of the watchlist
 bks --count 4 --k 2              # stricter: 4+ candles, bigger-than-usual bodies
 bks --interval 1h                # a different timeframe (default 15m)
+bks --full                       # extra columns: base, freshness, body sizes
 bks --format json                # machine-readable, for piping into other tools
 ```
 
@@ -67,8 +68,8 @@ then by length, then body size. The still-forming candle is dropped, so results
 never shift mid-candle.
 
 Each row shows direction, type (`ongoing`, or `level` with the price it reacted
-at), age, length, start time, a fresh flag, and body sizes. Exit code: `0`
-matched, `1` none, `2` error.
+at), age, length, and start time; `--full` adds base, freshness, and body sizes.
+Exit code: `0` matched, `1` none, `2` error.
 
 ## Symbols
 

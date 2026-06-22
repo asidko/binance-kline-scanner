@@ -158,12 +158,16 @@ rs, errs = run_scan(["LVL", "ONG"], type_filter="both")
 out = {"params": {"count": 3, "dominance": 0.5, "metric": "median-body", "k": 1.5, "direction": "up",
                   "type": "both", "fresh_required": True, "interval": "15m", "limit": 40},
        "scanned": 2, "matched_count": len(rs), "elapsed_s": 0.0, "errors": errs, "results": rs}
-txt = scanner.render_text(out)
-header, rows = txt.splitlines()[1], {ln.split()[0]: ln.split() for ln in txt.splitlines() if ln.strip()[:3] in ("LVL", "ONG")}
-assert "LEVEL" in header, header
-assert rows["LVL"][3] == "113.934" and rows["LVL"][7] == "99", rows["LVL"]   # level col, base col (STARTED sits between)
-assert rows["ONG"][3] == "-", rows["ONG"]                                  # ongoing -> dash
-print("PASS scanner text renders LEVEL column: level price for level run, '-' for ongoing"); ok += 1
+def _rows(txt):
+    return txt.splitlines()[1], {ln.split()[0]: ln.split() for ln in txt.splitlines() if ln.strip()[:3] in ("LVL", "ONG")}
+
+header, rows = _rows(scanner.render_text(out))   # default: core columns only
+assert "LEVEL" in header and "BASE" not in header and "BODIES" not in header, header
+assert rows["LVL"][3] == "113.934" and rows["ONG"][3] == "-", rows                # level col; ongoing -> dash
+fheader, frows = _rows(scanner.render_text(out, full=True))                       # --full: extra columns
+assert "BASE" in fheader and "STATE" in fheader and "AVGX" in fheader and "BODIES" in fheader, fheader
+assert frows["LVL"][3] == "113.934" and frows["LVL"][7] == "99", frows["LVL"]     # level col, base col
+print("PASS text shows core columns by default; --full adds base/state/avgx/bodies"); ok += 1
 
 T0 = 1_718_900_000_000   # fixed ms epoch; 15m candles step 900_000 ms
 res, _ = scanner.scan(["LVL"], lambda s, i, l: [{**c, "t": T0 + n * 900_000} for n, c in enumerate(WINDOWS["LVL"])],

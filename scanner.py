@@ -31,6 +31,7 @@ Options:
   --type <t>           both (default) | ongoing (one color after) | level (red+green after)
   --include-stale      also report runs whose base is already broken (default: fresh only)
   --candles            include each run's full OHLC
+  --full               text: also show base, state, avgx, body multiples (default: core columns)
   --format <fmt>       text (default) | json
   --exit-zero          always exit 0 (default: 0 matched / 1 none / 2 error)
 
@@ -173,7 +174,7 @@ def scan(symbols: list[str], fetch, count: int, dominance: float, metric: str, k
     return results, errors
 
 
-def render_text(out: dict) -> str:
+def render_text(out: dict, full: bool = False) -> str:
     p = out["params"]
     dirn = p["direction"] if p["direction"] != "both" else "same-color"
     fresh = "fresh" if p["fresh_required"] else "any"
@@ -182,21 +183,25 @@ def render_text(out: dict) -> str:
              f"{p['count']}+ {dirn} {p['metric']}, k={p['k']:g}, dom={p['dominance']:g}, {fresh}, {p['interval']} x{p['limit']}. "
              f"Ranked by recency band, length, body."]
     if out["results"]:
-        lines.append(f"  {'SYMBOL':<12} {'DIR':<4} {'TYPE':<7} {'LEVEL':>13} {'AGE':>3} {'LEN':>3} {'STARTED':<20} {'BASE':>13} {'STATE':<5} {'AVGX':>5}  BODIES")
+        head = f"  {'SYMBOL':<12} {'DIR':<4} {'TYPE':<7} {'LEVEL':>13} {'AGE':>3} {'LEN':>3} {'STARTED':<20}"
+        lines.append(head + (f" {'BASE':>13} {'STATE':<5} {'AVGX':>5}  BODIES" if full else ""))
         for e in out["results"]:
             t = e["runs"][0]
-            avgx = f"{t['body_mult_mean']:g}" if t["body_mult_mean"] is not None else "-"
-            bodies = "/".join(f"{m:g}" if m is not None else "-" for m in t["body_mults"])
             lvl = det.fmt_price(t["level"]) if t["level"] is not None else "-"
-            lines.append(f"  {e['symbol']:<12} {t['direction']:<4} {t['type']:<7} {lvl:>13} {t['age']:>3} {t['length']:>3} "
-                         f"{t['started_at'] or '-':<20} {det.fmt_price(t['base']):>13} {'fresh' if t['fresh'] else 'stale':<5} {avgx:>5}  {bodies}")
+            row = (f"  {e['symbol']:<12} {t['direction']:<4} {t['type']:<7} {lvl:>13} {t['age']:>3} {t['length']:>3} "
+                   f"{t['started_at'] or '-':<20}")
+            if full:
+                avgx = f"{t['body_mult_mean']:g}" if t["body_mult_mean"] is not None else "-"
+                bodies = "/".join(f"{m:g}" if m is not None else "-" for m in t["body_mults"])
+                row += f" {det.fmt_price(t['base']):>13} {'fresh' if t['fresh'] else 'stale':<5} {avgx:>5}  {bodies}"
+            lines.append(row)
     for e in out["errors"]:
         lines.append(f"  ! {e['symbol']}: {e['error']}")
-    return "\n".join(lines)
+    return "\n".join(line.rstrip() for line in lines)
 
 
-def _emit(out: dict, fmt: str) -> None:
-    print(render_text(out) if fmt == "text" else json.dumps(out))
+def _emit(out: dict, fmt: str, full: bool = False) -> None:
+    print(render_text(out, full) if fmt == "text" else json.dumps(out))
 
 
 class _VersionAction(argparse.Action):
@@ -232,6 +237,7 @@ def main() -> int:
     parser.add_argument("--type", choices=["both", "ongoing", "level"], default="both", metavar="<t>")
     parser.add_argument("--include-stale", action="store_true")
     parser.add_argument("--candles", action="store_true")
+    parser.add_argument("--full", action="store_true")
     parser.add_argument("--format", choices=["json", "text"], default="text", metavar="<fmt>")
     parser.add_argument("--exit-zero", action="store_true")
     args = parser.parse_args()
@@ -253,11 +259,11 @@ def main() -> int:
             symbols = load_symbols(args.symbols, args.symbols_file)
     except OSError as exc:
         out["errors"] = [{"symbol": "-", "error": str(exc)}]
-        _emit(out, args.format)
+        _emit(out, args.format, args.full)
         return 0 if args.exit_zero else 2
     if not symbols:
         out["errors"] = [{"symbol": "-", "error": "no symbols to scan"}]
-        _emit(out, args.format)
+        _emit(out, args.format, args.full)
         return 0 if args.exit_zero else 2
 
     print(f"scanning {len(symbols)} symbols, {args.interval} x{args.limit}, {args.workers} workers ...", file=sys.stderr)
@@ -269,7 +275,7 @@ def main() -> int:
     out["matched_count"] = len(results)
     out["errors"] = errors
     out["results"] = results
-    _emit(out, args.format)
+    _emit(out, args.format, args.full)
     if args.exit_zero:
         return 0
     return 0 if results else 1
