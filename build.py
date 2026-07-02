@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent
 ENTRY = ROOT / "scanner.py"
 DIST = ROOT / "dist"
 
-_OS = {"Linux": "linux", "Darwin": "macos", "Windows": "windows"}
+_OS = {"Linux": "linux", "Darwin": "macos"}
 _ARCH = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "arm64", "arm64": "arm64"}
 
 

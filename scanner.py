@@ -13,31 +13,12 @@ Usage:
 Symbols come from --symbols (comma list) or --symbols-file (one per line, # comments).
 With neither, the default list is ~/.config/bks/scan_symbols.txt, auto-seeded from the
 bundled template on first run so you can edit it (override the dir with BKS_CONFIG_DIR).
-
-Options:
-  --symbols <list>     comma-separated symbols (overrides the file)
-  --symbols-file <p>   symbol list file (default: ~/.config/bks/scan_symbols.txt)
-  --all-symbols        scan every trading USD-M perpetual on Binance (crypto + TradFi)
-  --interval <tf>      kline interval (default 15m)
-  --limit <n>          klines fetched per symbol (default 40)
-  --workers <n>        parallel fetches, bounded pool 1..32 (default 8)
-  --count <n>          candles in a run (default 3)
-  --dominance <f>      fraction of a run's candles that must be 'large' (default 0.5;
-                       1.0 = every candle large, 0.5 = majority; weak ends trimmed)
-  --metric <name>      median-body (default) | atr
-  --k <float>          body must be >= K * yardstick (default 1.5 median-body, 0.9 atr)
-  --atr-period <n>     ATR lookback, atr metric only (default 14)
-  --direction <dir>    both (default) | up | down
-  --type <t>           both (default) | ongoing (one color after) | level (red+green after)
-  --include-stale      also report runs whose base is already broken (default: fresh only)
-  --candles            include each run's full OHLC
-  --full               text: also show base, state, avgx, body multiples (default: core columns)
-  --format <fmt>       text (default) | json
-  --exit-zero          always exit 0 (default: 0 matched / 1 none / 2 error)
+Flags: see --help. Exit: 0 = matched, 1 = no match, 2 = error.
 
 Examples:
-  uv run ./scanner.py --direction down --format text
-  uv run ./scanner.py --symbols SOLUSDT,XRPUSDT --count 3 --k 2
+  bks --direction down
+  bks --symbols SOLUSDT,XRPUSDT --count 4 --k 2
+  bks --type level --format json
 """
 # Build flags for `nuitka` (a portable single-file binary). Applied whenever
 # nuitka compiles this module, so source and CI builds stay identical.
@@ -83,47 +64,48 @@ def ensure_symbols_file() -> bool:
     if DEFAULT_SYMBOLS_FILE.exists():
         return False
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(BUNDLED_SYMBOLS_FILE, DEFAULT_SYMBOLS_FILE)
+    tmp = DEFAULT_SYMBOLS_FILE.with_suffix(".tmp")
+    shutil.copyfile(BUNDLED_SYMBOLS_FILE, tmp)
+    os.replace(tmp, DEFAULT_SYMBOLS_FILE)
     return True
+
+
+def _get_json(url: str, retries: int):
+    # jitter both the first hit and every retry wake-up: workers that get rate-limited together
+    # would otherwise sleep the same Retry-After and re-fire as the same burst
+    time.sleep(random.uniform(0, JITTER))
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                return json.load(resp)
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            retry_after = exc.headers.get("Retry-After", "1")
+            wait = float(retry_after) if retry_after.isdigit() else 1.0
+            if exc.code in (418, 429) and attempt < retries:
+                time.sleep(min(wait, MAX_BACKOFF) + random.uniform(0, JITTER))
+                continue
+            raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt < retries:
+                time.sleep(0.5 * (attempt + 1) + random.uniform(0, JITTER))
+                continue
+            raise
 
 
 def fetch_klines(symbol: str, interval: str, limit: int, retries: int = 2) -> list[dict]:
     # fetch one extra and drop the final kline - on a live feed the most recent candle is still
     # forming, so counting it would shift runs, freshness, and levels on every poll until it closes
     url = f"{FAPI_KLINES}?{urllib.parse.urlencode({'symbol': symbol, 'interval': interval, 'limit': limit + 1})}"
-    time.sleep(random.uniform(0, JITTER))  # de-sync the worker burst so we don't hit Binance all at once
-    for attempt in range(retries + 1):
-        try:
-            with urllib.request.urlopen(url, timeout=10) as resp:
-                rows = json.load(resp)
-            return [{"t": int(r[0]), "o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4])} for r in rows[:-1]]
-        except urllib.error.HTTPError as exc:
-            retry_after = exc.headers.get("Retry-After", "1")
-            wait = float(retry_after) if retry_after.isdigit() else 1.0
-            if exc.code in (418, 429) and attempt < retries:
-                time.sleep(min(wait, MAX_BACKOFF))
-                continue
-            raise
-        except (urllib.error.URLError, TimeoutError):
-            if attempt < retries:
-                time.sleep(0.5 * (attempt + 1))
-                continue
-            raise
+    rows = _get_json(url, retries)
+    return [{"t": int(r[0]), "o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4])} for r in rows[:-1]]
 
 
 def fetch_all_symbols(retries: int = 2) -> list[str]:
     # every actively trading USD-M perpetual (crypto + TradFi equity perps) from exchangeInfo
-    for attempt in range(retries + 1):
-        try:
-            with urllib.request.urlopen(FAPI_EXCHANGE_INFO, timeout=10) as resp:
-                data = json.load(resp)
-            return sorted(s["symbol"] for s in data["symbols"]
-                          if s.get("status") == "TRADING" and s.get("contractType") in PERPETUAL_TYPES)
-        except (urllib.error.URLError, TimeoutError):
-            if attempt < retries:
-                time.sleep(0.5 * (attempt + 1))
-                continue
-            raise
+    data = _get_json(FAPI_EXCHANGE_INFO, retries)
+    return sorted(s["symbol"] for s in data["symbols"]
+                  if s.get("status") == "TRADING" and s.get("contractType") in PERPETUAL_TYPES)
 
 
 def load_symbols(symbols_arg: str | None, symbols_file: Path) -> list[str]:
@@ -191,8 +173,8 @@ def render_text(out: dict, full: bool = False) -> str:
             row = (f"  {e['symbol']:<12} {t['direction']:<4} {t['type']:<7} {lvl:>13} {t['age']:>3} {t['length']:>3} "
                    f"{t['started_at'] or '-':<20}")
             if full:
-                avgx = f"{t['body_mult_mean']:g}" if t["body_mult_mean"] is not None else "-"
-                bodies = "/".join(f"{m:g}" if m is not None else "-" for m in t["body_mults"])
+                avgx = f"{round(t['body_mult_mean'], 2):g}" if t["body_mult_mean"] is not None else "-"
+                bodies = "/".join(f"{round(m, 2):g}" if m is not None else "-" for m in t["body_mults"])
                 row += f" {det.fmt_price(t['base']):>13} {'fresh' if t['fresh'] else 'stale':<5} {avgx:>5}  {bodies}"
             lines.append(row)
     for e in out["errors"]:
@@ -222,24 +204,43 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action=_VersionAction, help="show version and exit")
-    parser.add_argument("--symbols", metavar="<list>")
-    parser.add_argument("--symbols-file", metavar="<path>", type=Path, default=DEFAULT_SYMBOLS_FILE)
-    parser.add_argument("--all-symbols", action="store_true")
-    parser.add_argument("--interval", metavar="<tf>", default="15m")
-    parser.add_argument("--limit", metavar="<n>", type=int, default=40)
-    parser.add_argument("--workers", metavar="<n>", type=int, default=8)
-    parser.add_argument("--count", "-n", metavar="<n>", type=int, default=3)
-    parser.add_argument("--dominance", metavar="<f>", type=float, default=0.5)
-    parser.add_argument("--metric", choices=list(det.METRICS), default="median-body", metavar="<name>")
-    parser.add_argument("--k", metavar="<float>", type=float, default=None)
-    parser.add_argument("--atr-period", metavar="<n>", type=int, default=14)
-    parser.add_argument("--direction", choices=["both", "up", "down"], default="both", metavar="<dir>")
-    parser.add_argument("--type", choices=["both", "ongoing", "level"], default="both", metavar="<t>")
-    parser.add_argument("--include-stale", action="store_true")
-    parser.add_argument("--candles", action="store_true")
-    parser.add_argument("--full", action="store_true")
-    parser.add_argument("--format", choices=["json", "text"], default="text", metavar="<fmt>")
-    parser.add_argument("--exit-zero", action="store_true")
+    parser.add_argument("--symbols", metavar="<list>",
+                        help="comma-separated symbols (overrides the symbols file)")
+    parser.add_argument("--symbols-file", metavar="<path>", type=Path, default=DEFAULT_SYMBOLS_FILE,
+                        help=f"symbol list file, one per line, # comments (default: {DEFAULT_SYMBOLS_FILE})")
+    parser.add_argument("--all-symbols", action="store_true",
+                        help="scan every trading USD-M perpetual on Binance (crypto + TradFi)")
+    parser.add_argument("--interval", metavar="<tf>", default="15m",
+                        help="kline interval (default 15m)")
+    parser.add_argument("--limit", metavar="<n>", type=int, default=40,
+                        help="klines fetched per symbol (default 40)")
+    parser.add_argument("--workers", metavar="<n>", type=int, default=8,
+                        help="parallel fetches, bounded pool 1..32 (default 8)")
+    parser.add_argument("--count", "-n", metavar="<n>", type=int, default=3,
+                        help="candles required in a run (default 3)")
+    parser.add_argument("--dominance", metavar="<f>", type=float, default=0.5,
+                        help="fraction of a run's candles that must be large, weak ends trimmed "
+                             "(default 0.5 = majority; 1.0 = every candle)")
+    parser.add_argument("--metric", choices=list(det.METRICS), default="median-body", metavar="<name>",
+                        help="'large' yardstick: median-body (default) | atr")
+    parser.add_argument("--k", metavar="<float>", type=float, default=None,
+                        help="body must be >= K * yardstick (default 1.5 median-body, 0.9 atr)")
+    parser.add_argument("--atr-period", metavar="<n>", type=int, default=14,
+                        help="ATR lookback, atr metric only (default 14)")
+    parser.add_argument("--direction", choices=["both", "up", "down"], default="both", metavar="<dir>",
+                        help="both (default) | up | down")
+    parser.add_argument("--type", choices=["both", "ongoing", "level"], default="both", metavar="<t>",
+                        help="both (default) | ongoing (one color closed after) | level (a red and a green closed after)")
+    parser.add_argument("--include-stale", action="store_true",
+                        help="also report runs a later candle has closed back into (default: fresh only)")
+    parser.add_argument("--candles", action="store_true",
+                        help="include each run's full OHLC in JSON")
+    parser.add_argument("--full", action="store_true",
+                        help="text: also show base, state, avgx, body multiples (default: core columns)")
+    parser.add_argument("--format", choices=["json", "text"], default="text", metavar="<fmt>",
+                        help="text (default) | json")
+    parser.add_argument("--exit-zero", action="store_true",
+                        help="always exit 0 (default: 0 matched / 1 none / 2 error)")
     args = parser.parse_args()
 
     fresh = not args.include_stale
@@ -250,6 +251,11 @@ def main() -> int:
                    "type": args.type, "fresh_required": fresh, "interval": args.interval, "limit": args.limit},
         "scanned": 0, "matched_count": 0, "elapsed_s": None, "errors": [], "results": [],
     }
+    err = det.validate_params(args.count, args.dominance, k, args.atr_period)
+    if err:
+        out["errors"] = [{"symbol": "-", "error": err}]
+        _emit(out, args.format, args.full)
+        return 0 if args.exit_zero else 2
     try:
         if args.all_symbols:
             symbols = fetch_all_symbols()
@@ -257,7 +263,7 @@ def main() -> int:
             if not args.symbols and args.symbols_file == DEFAULT_SYMBOLS_FILE and ensure_symbols_file():
                 print(f"created {DEFAULT_SYMBOLS_FILE} from the bundled list - edit it to choose what scans", file=sys.stderr)
             symbols = load_symbols(args.symbols, args.symbols_file)
-    except OSError as exc:
+    except (OSError, ValueError, KeyError, TypeError) as exc:  # network/file failures + a non-JSON or reshaped exchangeInfo
         out["errors"] = [{"symbol": "-", "error": str(exc)}]
         _emit(out, args.format, args.full)
         return 0 if args.exit_zero else 2
@@ -278,6 +284,8 @@ def main() -> int:
     _emit(out, args.format, args.full)
     if args.exit_zero:
         return 0
+    if errors and not results and len(errors) == len(symbols):  # nothing was actually scanned
+        return 2
     return 0 if results else 1
 
 

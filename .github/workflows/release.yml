@@ -26,12 +26,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
       - run: uv sync --dev
+      - name: check the tag matches the project version
+        run: |
+          v=$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != pyproject version $v" >&2; exit 1; }
+      - name: lint and test
+        run: |
+          uv run ruff check .
+          uv run python test_klines_seq_detector.py
+          uv run python test_scanner.py
       - run: uv run python build.py
       - name: smoke test the built binary
         run: |
           bin=$(ls dist/bks-*)
           "$bin" --version
           "$bin" --help >/dev/null
+          cfg=$(mktemp -d)
+          BKS_CONFIG_DIR="$cfg" "$bin" --exit-zero >/dev/null 2>&1 || true
+          test -f "$cfg/scan_symbols.txt"  # the bundled template must seed the config dir
       - uses: actions/upload-artifact@v4
         with:
           name: bks-${{ matrix.os }}
@@ -51,8 +63,9 @@ jobs:
           docker run --rm --privileged -v "$PWD":/build -w /build \
             termux/termux-docker:aarch64 bash -c '
               set -e
-              apt update -yq && apt install -yq python clang binutils patchelf ldd ccache termux-elf-cleaner
-              pip install --no-input nuitka zstandard
+              apt update -yq && apt install -yq python git clang binutils patchelf ldd ccache termux-elf-cleaner
+              git config --global --add safe.directory /build
+              pip install --no-input nuitka==4.1.2 zstandard==0.25.0  # keep in sync with uv.lock
               python build.py
             '
       - name: smoke test the built binary
@@ -80,6 +93,8 @@ jobs:
           find artifacts -type f -name 'bks-*' -exec cp {} out/ \;
           cd out && sha256sum bks-* > SHA256SUMS
           cat SHA256SUMS
+      - name: warn when the android binary is missing
+        run: ls out/bks-android-* >/dev/null 2>&1 || echo "::warning::bks-android-arm64 missing - build-android failed; Termux arm64 installs fall back to source"
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
         with:
           files: out/*
@@ -97,7 +112,7 @@ jobs:
             ## Platforms
             - Linux x86_64 and arm64
             - macOS arm64 (Apple Silicon). On Intel Macs, build from source.
-            - Android (Termux): `pkg install python`, then run the install line - it installs from source (stdlib only).
+            - Android (Termux) arm64: prebuilt binary via the install line. Other arches install from source (`pkg install python` first).
 
             ## Install
 
@@ -112,7 +127,7 @@ jobs:
             Download the asset for your platform plus `SHA256SUMS`, verify, then install:
 
             ```
-            sha256sum -c SHA256SUMS --ignore-missing      # macOS: shasum -a 256 -c
+            sha256sum -c SHA256SUMS --ignore-missing      # macOS: shasum -a 256 -c SHA256SUMS --ignore-missing
 
             # user-local (no sudo) - make sure ~/.local/bin is on your PATH
             chmod +x bks-* && mkdir -p ~/.local/bin && mv bks-* ~/.local/bin/bks
@@ -130,6 +145,6 @@ jobs:
             ## Quickstart
 
             ```
-            bks --format text                       # scan the bundled list, ranked table
-            bks --symbols SOLUSDT,DOGEUSDT --count 3 # specific symbols
+            bks                                       # scan the default watchlist, ranked table
+            bks --symbols SOLUSDT,DOGEUSDT --count 3  # specific symbols
             ```

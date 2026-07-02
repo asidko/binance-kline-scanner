@@ -130,4 +130,40 @@ r = js(flat, code=1)
 assert r["matched"] is False and r["warning"] and "baseline" in r["warning"], r
 print("PASS flat window (median body 0) -> no match + baseline warning"); ok += 1
 
+r = js(baseline + up_run + fresh_tail, "--direction", "up", "--type", "level", code=1)
+assert r["matched"] is False, r                                        # only a red closed after -> ongoing
+r = js(baseline + up_run + lvl_tail, "--direction", "up", "--type", "level", code=0)
+assert all(x["type"] == "level" for x in r["runs"]), r
+r = js(baseline + up_run + lvl_tail, "--direction", "up", "--type", "ongoing", code=1)
+assert r["matched"] is False, r
+print("PASS --type filters runs by level/ongoing"); ok += 1
+
+r = js(baseline + up_run, "--count", "0", code=2)
+assert "count" in r["error"], r
+r = js(baseline + up_run, "--k", "0", code=2)
+assert "k must" in r["error"], r
+r = js(baseline + up_run, "--metric", "atr", "--atr-period", "0", code=2)
+assert "atr-period" in r["error"], r
+print("PASS count/k/atr-period validated -> error, exit 2"); ok += 1
+
+r = js(baseline + up_run + fresh_tail, "--direction", "up", "--metric", "atr", code=0)
+assert r["params"]["metric"] == "atr" and r["params"]["k"] == 0.9, r   # metric-dependent DEFAULT_K
+assert r["matched"] is True and r["stats"]["atr_period"] == 14 and r["stats"]["unit"] > 0, r
+print("PASS atr metric matches with its own default k (0.9), atr_period reported"); ok += 1
+
+p = subprocess.run([sys.executable, DET], input='[{"o": [], "h": 1, "l": 0, "c": 1}]', capture_output=True, text=True)
+assert p.returncode == 2 and "non-numeric" in json.loads(p.stdout)["error"], p.stdout
+print("PASS non-numeric OHLC -> structured error, exit 2"); ok += 1
+
+b3 = [small(100, 103), small(103, 100)] * 5                            # bodies 3 -> median body 3
+runX = [{"o": 100, "h": 111, "l": 99, "c": 110},
+        {"o": 110, "h": 121, "l": 109, "c": 120},
+        {"o": 120, "h": 131, "l": 119, "c": 130}]                      # bodies 10 -> mult 10/3
+r = js(b3 + runX, "--direction", "up", code=0)
+assert abs(r["runs"][0]["body_mults"][0] - 10 / 3) < 1e-9, r["runs"][0]
+assert abs(r["runs"][0]["body_mult_mean"] - 10 / 3) < 1e-9, r["runs"][0]
+p = run(b3 + runX, "--direction", "up", "--format", "text", code=0)
+assert "3.33" in p.stdout and "3.3333333" not in p.stdout, p.stdout
+print("PASS body_mults keep full precision in JSON, rounded only in text"); ok += 1
+
 print(f"\nALL {ok} TESTS PASSED")

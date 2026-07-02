@@ -13,20 +13,7 @@ Input  : JSON list of candles, oldest first. Each is {o,h,l,c} (or open/high/low
          or a raw Binance kline array [openTime,o,h,l,c,...]. Numbers or numeric strings.
 Output : runs ranked by recency band, then length, then body size. JSON (default) or --format text.
 Exit   : 0 = matched, 1 = no match, 2 = error (use --exit-zero to always exit 0).
-
-Options:
-  --count <n>        candles in a run (default 3)
-  --dominance <f>    fraction of a run's candles that must be 'large' (default 0.5):
-                     1.0 = every candle large, 0.5 = majority. Weak ends are trimmed.
-  --metric <name>    'large' yardstick: median-body (default) | atr
-  --k <float>        body must be >= K * yardstick (default 1.5 median-body, 0.9 atr)
-  --atr-period <n>   ATR lookback, atr metric only (default 14)
-  --direction <dir>  both (default) | up | down
-  --type <t>         both (default) | ongoing (one color after) | level (red+green after)
-  --fresh            only runs whose base is not yet crossed by a later wick
-  --candles          include each run's full OHLC (default: body multiples only)
-  --format <fmt>     json (default) | text
-  --exit-zero        always exit 0 (default uses grep-style 0/1/2 codes)
+Flags  : see --help.
 
 Examples:
   curl -s 'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=15m&limit=50' | ./klines_seq_detector.py --fresh
@@ -57,7 +44,10 @@ def parse_candles(raw: str) -> list[dict]:
             raise ValueError(f"candle {i}: expected an object or a Binance kline array")
         if None in (o, h, lo, c):
             raise ValueError(f"candle {i}: missing one of o/h/l/c")
-        out.append({"o": float(o), "h": float(h), "l": float(lo), "c": float(c)})
+        try:
+            out.append({"o": float(o), "h": float(h), "l": float(lo), "c": float(c)})
+        except (TypeError, ValueError):
+            raise ValueError(f"candle {i}: non-numeric o/h/l/c") from None
     return out
 
 
@@ -192,8 +182,8 @@ def detect(candles: list[dict], count: int, dominance: float, ref: dict, directi
         if fresh_only and not fresh:
             continue
         rtype = run_type(candles, end)
-        mults = [round(body(c) / unit, 2) if unit else None for c in seg]
-        mean_mult = round(sum(mults) / len(mults), 2) if all(m is not None for m in mults) else None
+        mults = [body(c) / unit if unit else None for c in seg]
+        mean_mult = sum(mults) / len(mults) if all(m is not None for m in mults) else None
         run = {"direction": dname, "type": rtype, "start": start, "end": end,
                "length": end - start + 1, "age": n - 1 - end, "base": base,
                "level": level_price(candles[end + 1:], d) if rtype == "level" else None, "fresh": fresh,
@@ -216,15 +206,25 @@ def _skeleton(count: int, dominance: float, metric: str, k: float, direction: st
     }
 
 
+def validate_params(count: int, dominance: float, k: float, atr_period: int) -> str | None:
+    if count < 1:
+        return "count must be >= 1"
+    if not 0 < dominance <= 1:
+        return "dominance must be in (0, 1]"
+    if k <= 0:
+        return "k must be > 0"
+    if atr_period < 1:
+        return "atr-period must be >= 1"
+    return None
+
+
 def run_detection(candles: list[dict], count: int, dominance: float, metric: str, k: float, atr_period: int,
                   direction: str, type_filter: str, fresh: bool, with_candles: bool) -> dict:
     result = _skeleton(count, dominance, metric, k, direction, type_filter, fresh)
     result["stats"]["window"] = len(candles)
-    if count < 1:
-        result["error"] = "count must be >= 1"
-        return result
-    if not 0 < dominance <= 1:
-        result["error"] = "dominance must be in (0, 1]"
+    error = validate_params(count, dominance, k, atr_period)
+    if error:
+        result["error"] = error
         return result
     if len(candles) >= count:
         ref = METRICS[metric](candles, k, atr_period)
@@ -259,10 +259,10 @@ def render_text(result: dict) -> str:
         fresh_req = ", fresh required" if p["fresh_required"] else ""
         lines.append(f"Matched {len(runs)} run{'s' if len(runs) != 1 else ''}. "
                      f"{p['count']}+ {dirn} {p['metric']} candles, k={p['k']:g}, dom={p['dominance']:g}{fresh_req}, "
-                     f"{s['window']}-candle window. unit={s['unit']:.4g}, threshold={s['threshold']:.4g}.")
+                     f"{s['window']}-candle window. unit={fmt_price(s['unit'])}, threshold={fmt_price(s['threshold'])}.")
         for r in runs:
-            avgx = f"{r['body_mult_mean']:g}" if r["body_mult_mean"] is not None else "-"
-            bodies = "/".join(f"{m:g}" if m is not None else "-" for m in r["body_mults"])
+            avgx = f"{round(r['body_mult_mean'], 2):g}" if r["body_mult_mean"] is not None else "-"
+            bodies = "/".join(f"{round(m, 2):g}" if m is not None else "-" for m in r["body_mults"])
             lvl = fmt_price(r["level"]) if r["level"] is not None else "-"
             lines.append(f"  {r['direction']:<4} {r['type']:<7} level {lvl:>12} [{r['start']}-{r['end']}]  len {r['length']:<2} "
                          f"age {r['age']:<3} base {fmt_price(r['base']):>12}  {'fresh' if r['fresh'] else 'stale':<5} "
@@ -283,17 +283,29 @@ def main() -> int:
         epilog=__doc__[__doc__.index("Examples:"):].rstrip(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--count", "-n", type=int, default=3, metavar="<n>")
-    parser.add_argument("--dominance", type=float, default=0.5, metavar="<f>")
-    parser.add_argument("--metric", choices=list(METRICS), default="median-body", metavar="<name>")
-    parser.add_argument("--k", type=float, default=None, metavar="<float>")
-    parser.add_argument("--atr-period", type=int, default=14, metavar="<n>")
-    parser.add_argument("--direction", choices=["both", "up", "down"], default="both", metavar="<dir>")
-    parser.add_argument("--type", choices=["both", "ongoing", "level"], default="both", metavar="<t>")
-    parser.add_argument("--fresh", action="store_true")
-    parser.add_argument("--candles", action="store_true")
-    parser.add_argument("--format", choices=["json", "text"], default="json", metavar="<fmt>")
-    parser.add_argument("--exit-zero", action="store_true")
+    parser.add_argument("--count", "-n", type=int, default=3, metavar="<n>",
+                        help="candles required in a run (default 3)")
+    parser.add_argument("--dominance", type=float, default=0.5, metavar="<f>",
+                        help="fraction of a run's candles that must be large, weak ends trimmed "
+                             "(default 0.5 = majority; 1.0 = every candle)")
+    parser.add_argument("--metric", choices=list(METRICS), default="median-body", metavar="<name>",
+                        help="'large' yardstick: median-body (default) | atr")
+    parser.add_argument("--k", type=float, default=None, metavar="<float>",
+                        help="body must be >= K * yardstick (default 1.5 median-body, 0.9 atr)")
+    parser.add_argument("--atr-period", type=int, default=14, metavar="<n>",
+                        help="ATR lookback, atr metric only (default 14)")
+    parser.add_argument("--direction", choices=["both", "up", "down"], default="both", metavar="<dir>",
+                        help="both (default) | up | down")
+    parser.add_argument("--type", choices=["both", "ongoing", "level"], default="both", metavar="<t>",
+                        help="both (default) | ongoing (one color closed after) | level (a red and a green closed after)")
+    parser.add_argument("--fresh", action="store_true",
+                        help="only runs no later candle has CLOSED back into (wicks poking in are fine)")
+    parser.add_argument("--candles", action="store_true",
+                        help="include each run's full OHLC (default: body multiples only)")
+    parser.add_argument("--format", choices=["json", "text"], default="json", metavar="<fmt>",
+                        help="json (default) | text")
+    parser.add_argument("--exit-zero", action="store_true",
+                        help="always exit 0 (default: 0 matched / 1 no match / 2 error)")
     args = parser.parse_args()
     k = args.k if args.k is not None else DEFAULT_K[args.metric]
 

@@ -15,7 +15,8 @@ TERMUX_LIB="${PREFIX:-}/share/bks"
 
 is_termux() {
     case "${PREFIX:-}" in *com.termux*) return 0 ;; esac
-    [ -n "${TERMUX_VERSION:-}" ]
+    # TERMUX_VERSION alone is not enough: with PREFIX unset the Termux paths degrade to /bin
+    [ -n "${TERMUX_VERSION:-}" ] && [ -n "${PREFIX:-}" ]
 }
 
 # Termux is Android/bionic - the glibc release binaries can't run there. Install from source instead
@@ -25,11 +26,16 @@ install_termux() {
     ref="${TAG:-main}"
     raw="https://raw.githubusercontent.com/${REPO}/${ref}"
     bindir="${BKS_INSTALL_DIR:-$PREFIX/bin}"
-    mkdir -p "$bindir" "$TERMUX_LIB"
     echo "Termux: installing bks from source (${ref})"
+    ttmp=$(mktemp -d)
+    trap 'rm -rf "$ttmp"' EXIT
     for f in scanner.py klines_seq_detector.py version.py pyproject.toml scan_symbols.txt; do
-        curl -fSL "$raw/$f" -o "$TERMUX_LIB/$f"
+        curl -fSL "$raw/$f" -o "$ttmp/$f"
     done
+    # stage first, swap in only after every file downloaded - a mid-download failure
+    # must not leave a mixed-version install behind
+    mkdir -p "$bindir" "$TERMUX_LIB"
+    mv -f "$ttmp"/* "$TERMUX_LIB/"
     printf '#!%s/bin/sh\nexec python3 "%s/scanner.py" "$@"\n' "$PREFIX" "$TERMUX_LIB" > "$bindir/$BIN"
     chmod 755 "$bindir/$BIN"
     echo "installed $bindir/$BIN"
@@ -61,15 +67,16 @@ do_remove() {
     if is_termux; then
         rm -f "${BKS_INSTALL_DIR:-$PREFIX/bin}/$BIN"
         rm -rf "$TERMUX_LIB"
-        echo "removed $BIN (Termux source install)"
-        exit 0
-    fi
-    if [ -f "$INSTALL_DIR/$BIN" ]; then
+        echo "removed $BIN (Termux install)"
+    elif [ -f "$INSTALL_DIR/$BIN" ]; then
         rm -f "$INSTALL_DIR/$BIN"
         echo "removed $INSTALL_DIR/$BIN"
     else
         echo "$BIN not installed in $INSTALL_DIR"
     fi
+    # the onefile binary unpacks itself here on first run, one dir per version
+    rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/bks"
+    echo "note: config kept at ${BKS_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/bks} - delete it manually if unwanted"
     exit 0
 }
 
@@ -84,7 +91,7 @@ done
 
 command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
 
-# Termux arm64 has a prebuilt binary (built under emulation in CI); other Termux arches build from source
+# Termux arm64 has a prebuilt binary (built on a native arm64 runner in CI); other Termux arches install from source
 if is_termux; then
     INSTALL_DIR="${BKS_INSTALL_DIR:-$PREFIX/bin}"
     case "$(uname -m)" in
@@ -95,7 +102,7 @@ fi
 
 target=$(detect_target)
 if [ "$target" = "macos-x86_64" ]; then
-    echo "no prebuilt binary for Intel macOS - build from source: https://github.com/${REPO}#develop--build-from-source" >&2
+    echo "no prebuilt binary for Intel macOS - build from source: https://github.com/${REPO}#build-from-source" >&2
     exit 1
 fi
 if [ -n "$TAG" ]; then
@@ -105,6 +112,12 @@ else
 fi
 
 asset="${BIN}-${target}"
+
+# the android build is best-effort in CI - if this release shipped without it, fall back to source
+if is_termux && ! curl -fsIL "$base/$asset" -o /dev/null 2>/dev/null; then
+    echo "no prebuilt android binary in ${TAG:-latest} - falling back to source install"
+    install_termux
+fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -123,6 +136,15 @@ fi
 [ "$want" = "$got" ] || { echo "checksum mismatch for $asset" >&2; exit 1; }
 echo "checksum ok"
 
+# prove the binary runs on THIS system before touching an existing install
+# (also warms the onefile unpack cache, so the first real run is instant)
+chmod 755 "$tmp/$asset"
+echo "verifying the binary runs (unpacks it, may take a moment)..."
+"$tmp/$asset" --version >/dev/null 2>&1 || {
+    echo "downloaded binary failed to run on this system (libc too old?) - build from source: https://github.com/${REPO}#build-from-source" >&2
+    exit 1
+}
+
 mkdir -p "$INSTALL_DIR"
 mv "$tmp/$asset" "$INSTALL_DIR/$BIN"
 chmod 755 "$INSTALL_DIR/$BIN"
@@ -138,6 +160,4 @@ case ":$PATH:" in
     *) echo "warning: $INSTALL_DIR is not in PATH - add it to your shell profile" ;;
 esac
 
-echo "running first-time setup (unpacks the binary, may take a moment)..."
-"$INSTALL_DIR/$BIN" --version >/dev/null 2>&1 || true
 echo "done. run: $BIN --help"

@@ -1,9 +1,13 @@
+import contextlib
+import email.message
+import io
 import json
 import os
 import pathlib
 import shutil
 import sys
 import tempfile
+import urllib.error
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import scanner
@@ -180,5 +184,60 @@ r, _ = run_scan(["WK"], dominance=0.5)
 assert [x["symbol"] for x in r] == ["WK"] and r[0]["runs"][0]["length"] == 3, r
 assert run_scan(["WK"], dominance=1.0)[0] == [], "dominance=1.0 must reject a weak interior candle"
 print("PASS dominance: majority-large run passes at 0.5, rejected at 1.0"); ok += 1
+
+_sleeps = []
+scanner.time.sleep = lambda s: _sleeps.append(s)
+_calls = {"n": 0}
+def _flaky(url, timeout=10):
+    _calls["n"] += 1
+    if _calls["n"] <= 2:
+        hdrs = email.message.Message()
+        hdrs["Retry-After"] = "120"
+        raise urllib.error.HTTPError(url, 429, "rate limited", hdrs, io.BytesIO(b""))
+    return _FakeResp([[0, "1", "2", "0.5", "1.5", "x"], [1, "9", "9", "9", "9", "x"]])
+scanner.urllib.request.urlopen = _flaky
+fk = scanner.fetch_klines("X", "15m", 40)
+assert fk[0]["c"] == 1.5 and _calls["n"] == 3, (fk, _calls)
+waits = [s for s in _sleeps if s >= 1]                    # the Retry-After sleeps; jitter sleeps are tiny
+assert len(waits) == 2 and all(scanner.MAX_BACKOFF <= w <= scanner.MAX_BACKOFF + scanner.JITTER for w in waits), _sleeps
+print("PASS 429 retried honoring Retry-After (capped at MAX_BACKOFF), succeeds on attempt 3"); ok += 1
+
+
+scanner.fetch_klines = fake_fetch
+def run_main(*argv):
+    sys.argv = ["bks", *argv]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
+        rc = scanner.main()
+    return rc, buf.getvalue()
+
+rc, txt = run_main("--symbols", "B,BAD", "--direction", "up", "--format", "json")
+env = json.loads(txt)
+assert rc == 0 and env["matched_count"] == 1 and [e["symbol"] for e in env["errors"]] == ["BAD"], (rc, env)
+rc, txt = run_main("--symbols", "A", "--direction", "down", "--format", "json")
+assert rc == 1 and json.loads(txt)["matched_count"] == 0, (rc, txt)   # scanned fine, nothing matched
+rc, txt = run_main("--symbols", "BAD", "--format", "json")
+assert rc == 2 and len(json.loads(txt)["errors"]) == 1, (rc, txt)     # every symbol failed = error, not "no match"
+rc, txt = run_main("--symbols", "B", "--count", "0", "--format", "json")
+assert rc == 2 and "count" in json.loads(txt)["errors"][0]["error"], (rc, txt)
+print("PASS main(): exit 0 matched / 1 none / 2 all-symbols-failed / 2 bad params"); ok += 1
+
+_orig_default, _orig_dir = scanner.DEFAULT_SYMBOLS_FILE, scanner.CONFIG_DIR
+_seed_dir = pathlib.Path(tempfile.mkdtemp()) / "bks"
+scanner.CONFIG_DIR, scanner.DEFAULT_SYMBOLS_FILE = _seed_dir, _seed_dir / "scan_symbols.txt"
+try:
+    run_main("--symbols", "B", "--direction", "up", "--format", "json")
+    assert not scanner.DEFAULT_SYMBOLS_FILE.exists(), "--symbols must not seed"
+    own = _seed_dir / "own.txt"
+    _seed_dir.mkdir(parents=True)
+    own.write_text("B\n")
+    rc, _ = run_main("--symbols-file", str(own), "--direction", "up", "--format", "json")
+    assert rc == 0 and not scanner.DEFAULT_SYMBOLS_FILE.exists(), "explicit --symbols-file must not seed"
+    rc, _ = run_main("--direction", "up", "--format", "json")             # default path -> seeds the template
+    assert scanner.DEFAULT_SYMBOLS_FILE.exists() and rc == 2, rc          # then every fake fetch fails
+finally:
+    shutil.rmtree(_seed_dir.parent, ignore_errors=True)
+    scanner.DEFAULT_SYMBOLS_FILE, scanner.CONFIG_DIR = _orig_default, _orig_dir
+print("PASS seeding fires only via main() on the default symbols path"); ok += 1
 
 print(f"\nALL {ok} SCANNER TESTS PASSED")

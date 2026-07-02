@@ -18,7 +18,7 @@ consolidation - it finds them and marks the break level (red) price coils agains
 
 ## Install
 
-Prebuilt single-file binary (Linux / macOS, x86_64 / arm64), no Python needed:
+Prebuilt single-file binary (Linux x86_64/arm64, macOS arm64), no Python needed:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/asidko/binance-kline-scanner/main/install.sh | sh
@@ -33,10 +33,10 @@ curl -fsSL https://raw.githubusercontent.com/asidko/binance-kline-scanner/main/i
 
 Prefer to do it by hand? Download a binary from the
 [latest release](https://github.com/asidko/binance-kline-scanner/releases/latest)
-and `chmod +x` it.
+and `chmod +x` it. Intel Macs have no prebuilt binary - build from source (below).
 
 **Android (Termux):** the same `curl ... | sh` line works - arm64 gets a
-prebuilt binary; other arches build from source (`pkg install python` first).
+prebuilt binary; other arches install from source (`pkg install python` first).
 
 ## Use
 
@@ -62,13 +62,15 @@ bks --full                       # extra columns: base, freshness, body sizes
 bks --format json                # machine-readable, for piping into other tools
 ```
 
-A run is N+ consecutive same-color candles whose bodies beat the window's
-typical body. Fresh runs (no later candle has closed back into them) rank first,
-then by length, then body size. The still-forming candle is dropped, so results
-never shift mid-candle.
+A run is N+ consecutive same-color candles where most bodies (`--dominance`,
+default majority) beat the window's typical body. Runs price has already closed
+back into are dropped by default; matches rank by recency band, then length,
+then body size. The still-forming candle is excluded, so results never shift
+mid-candle.
 
-Each row shows direction, type (`ongoing`, or `level` with the price it reacted
-at), age, length, and start time; `--full` adds base, freshness, and body sizes.
+Each row is a symbol's best run: direction, type (`ongoing`, or `level` with the
+price it reacted at), age, length, and start time; `--full` adds base, freshness,
+and body sizes. JSON carries every run and field, full precision.
 Exit code: `0` matched, `1` none, `2` error.
 
 ## Symbols
@@ -85,8 +87,7 @@ Want a ping when price reaches a level? Install
 (`bfm`), then turn the levels `bks` finds into alerts:
 
 ```
-bks --type level --format json | jq -r '.results[] | "\(.symbol) \(.runs[0].level)"' \
-  | while read sym lvl; do bfm add --symbol "$sym" --level "$lvl"; done
+bks --type level --format json | jq -r '.results[] | "\(.symbol) \(.runs[0].level)"' | while read sym lvl; do bfm add --symbol "$sym" --level "$lvl"; done
 ```
 
 `bfm` pings you (Telegram, etc.) when price hits any of them.

@@ -70,6 +70,12 @@ same-color "large" candles. Two pieces, one responsibility each.
   mapping the run's `start` index to the kline `openTime` it kept in `fetch_klines` (the `t` field).
   Standalone detector output has no `started_at`; it is `None` if a candle lacks `t`.
 - Exit codes: 0 = matched, 1 = no match, 2 = error. `--exit-zero` forces 0 for callers that parse.
+  A scan where EVERY symbol failed exits 2, not 1 - "nothing scanned" is an error, never "no match".
+- Param validation lives ONCE in `det.validate_params` (count >= 1, dominance in (0,1], k > 0,
+  atr-period >= 1); `run_detection` applies it and the scanner calls it BEFORE scanning (exit 2 with
+  the message in `errors`) - detector errors must never be silently swallowed as non-matches.
+- `body_mults`/`body_mult_mean` stay FULL precision in JSON and in `rank_key` (rounding before
+  ranking once flipped near-ties); round to 2 decimals only at text render time.
 - Fixed JSON shape regardless of flags: always-present keys, `error`/`warning` null when absent,
   a stable `unit` (the per-candle yardstick) + `metric` name (never `median_body` xor `atr`).
   Detector top-level `matched` is a BOOL; the scanner envelope uses `matched_count` (int) - do
@@ -85,9 +91,14 @@ same-color "large" candles. Two pieces, one responsibility each.
 - uv for everything: `uv sync`, `uv run ./scanner.py`. Stdlib only - keep `dependencies = []`
   (fetch via `urllib`, no `requests`). The detector must stay runnable as plain `python3` too.
 - Fetch in a bounded `ThreadPoolExecutor` (default 8, clamp 1..32) - fast but never a thundering
-  herd. Jitter each request to de-sync the burst. Retry 418/429 honoring Retry-After (capped) and
-  transient URLError/TimeoutError with backoff. Results/errors are appended in the main thread
-  (`as_completed`), so no locks; keep `run_detection` pure (no shared mutable state).
+  herd. All HTTP goes through the ONE `_get_json` helper: jitter before the first hit AND on every
+  retry sleep (workers rate-limited together must not wake as the same burst), retry 418/429
+  honoring Retry-After (capped at MAX_BACKOFF), retry transient URLError/TimeoutError with backoff,
+  and `close()` the HTTPError so retry storms don't leak sockets. Both `fetch_klines` and
+  `fetch_all_symbols` use it - never a second retry loop. Results/errors are appended in the main
+  thread (`as_completed`), so no locks; keep `run_detection` pure (no shared mutable state).
+- `main()` catches `(OSError, ValueError, KeyError, TypeError)` around symbol resolution - a proxy
+  serving HTML or a reshaped exchangeInfo must produce the JSON envelope + exit 2, not a traceback.
 - Read-only Binance: base `https://fapi.binance.com`, `timeout` on every call. Isolate per-symbol
   fetch failures - one bad symbol never kills a scan; collect it in `errors`.
 - Drop the still-forming candle: `fetch_klines` requests `limit + 1` and discards the last row.
@@ -110,7 +121,9 @@ same-color "large" candles. Two pieces, one responsibility each.
   `BKS_CONFIG_DIR` or XDG), auto-seeded from the template by `ensure_symbols_file()` on first run so
   the bundled list inside the read-only onefile stays editable. Seeding fires only when no
   `--symbols` and the default `--symbols-file` is in use - an explicit `--symbols-file` or
-  `--symbols` never seeds. Tests stub `CONFIG_DIR`/`DEFAULT_SYMBOLS_FILE` to a tempdir.
+  `--symbols` never seeds. Seed via tmp file + `os.replace` so an interrupted first run can't leave
+  a truncated list that later runs silently accept. Tests stub `CONFIG_DIR`/`DEFAULT_SYMBOLS_FILE`
+  to a tempdir.
 
 ## Conventions
 - Plain ASCII only. Type hints on every function. DRY: extract shared logic into a helper.
@@ -133,15 +146,29 @@ same-color "large" candles. Two pieces, one responsibility each.
 - Pinned to Python 3.13 (`.python-version`, `requires-python >=3.13`) - Nuitka support, not 3.14.
   Runtime deps stay empty (`dependencies = []`); `nuitka`/`ruff`/`zstandard` are dev-only.
 - CI: `.github/workflows/ci.yml` runs `ruff check .` + both test scripts on push/PR.
-  `release.yml` builds the binary per-OS (linux x86_64/arm64, macos arm64) on a `v*` tag, smoke-tests
-  `--version`/`--help`, and publishes binaries + `SHA256SUMS`. `install.sh` verifies that checksum.
+  `release.yml` builds the binary per-OS (linux x86_64/arm64, macos arm64) on a `v*` tag and publishes
+  binaries + `SHA256SUMS`. Release gates (a tag can point anywhere, so re-check everything): the tag
+  must equal `v<pyproject version>` (else the binary reports the wrong `--version` and the onefile
+  cache dir is mis-keyed), ruff + both test scripts run before building, and the smoke test covers
+  `--version`/`--help` PLUS a `BKS_CONFIG_DIR`-tempdir run asserting `scan_symbols.txt` got seeded
+  (proves `--include-data-files` actually bundled the template).
+- `install.sh` verifies the SHA256 checksum, then runs the STAGED binary (`--version`) before
+  replacing any existing install - a binary that can't run here (old glibc) must abort, not
+  overwrite a working one (this also pre-warms the onefile unpack cache). `--remove` also clears
+  `~/.cache/bks` (the per-version onefile unpack dirs) and says the config dir is kept.
 - Android/Termux is bionic, not glibc, and GitHub has no Android runner. `release.yml`'s `build-android`
-  job builds inside `termux/termux-docker:aarch64` under QEMU (emulated arm64, slow) and ships
-  `bks-android-arm64`. `build.py` names it `android-*` (detects `com.termux` in `$PREFIX`) so it never
-  collides with the glibc `linux-*` build. `install.sh` detects Termux (`$PREFIX`/`$TERMUX_VERSION`):
-  arm64 downloads that prebuilt binary (checksum-verified, into `$PREFIX/bin`); other arches fall back to
-  `install_termux` - SOURCE install (`.py` + `pyproject.toml` + `scan_symbols.txt` into `$PREFIX/share/bks`
-  + a `bks` shim running `python3 scanner.py`). Source path works only because the tool is stdlib-only.
+  job runs `termux/termux-docker:aarch64` on a NATIVE arm64 runner (`ubuntu-22.04-arm`; QEMU emulation
+  was ~8x slower) and ships `bks-android-arm64`. The container needs `git` (commit stamp; else
+  `--version` says "unknown") + `safe.directory /build`; pin its `pip install nuitka==/zstandard==` to
+  the uv.lock versions. The job is `continue-on-error` so an android flake never blocks the release -
+  the release job emits a `::warning::` when the artifact is missing, and `install.sh` HEAD-checks the
+  asset on Termux arm64 and falls back to source install when absent. `build.py` names it `android-*`
+  (detects `com.termux` in `$PREFIX`) so it never collides with the glibc `linux-*` build. `install.sh`
+  detects Termux (`$PREFIX` contains com.termux, or `$TERMUX_VERSION` AND `$PREFIX` set - never
+  `TERMUX_VERSION` alone, a leaked env var would degrade paths to `/bin`): arm64 downloads the prebuilt
+  binary (checksum-verified, into `$PREFIX/bin`); other arches use `install_termux` - SOURCE install
+  staged in a tempdir first, then `.py` + `pyproject.toml` + `scan_symbols.txt` into `$PREFIX/share/bks`
+  + a `bks` shim running `python3 scanner.py`. Source path works only because the tool is stdlib-only.
 
 ## Testing (before claiming done)
 - `python3 test_klines_seq_detector.py` - synthetic detector cases incl. flat-window guard, no network.
