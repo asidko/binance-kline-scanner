@@ -95,7 +95,7 @@ jobs:
           cat SHA256SUMS
       - name: warn when the android binary is missing
         run: ls out/bks-android-* >/dev/null 2>&1 || echo "::warning::bks-android-arm64 missing - build-android failed; Termux arm64 installs fall back to source"
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
+      - uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b  # v3.0.1
         with:
           files: out/*
           name: ${{ github.ref_name }} - fresh impulse scanner for Binance futures
